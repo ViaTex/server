@@ -6,7 +6,7 @@ export const userController = {
   async getProfile(
     req: Request,
     res: Response,
-    next: NextFunction
+    _next: NextFunction
   ): Promise<void> {
     try {
       const { id } = req.params;
@@ -16,7 +16,7 @@ export const userController = {
         select: {
           id: true,
           email: true,
-          name: true,
+          fullName: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -36,19 +36,19 @@ export const userController = {
   async updateProfile(
     req: Request,
     res: Response,
-    next: NextFunction
+    _next: NextFunction
   ): Promise<void> {
     try {
       const { id } = req.params;
-      const { name } = req.body;
+      const { fullName } = req.body;
 
       const user = await prisma.user.update({
         where: { id },
-        data: { name },
+        data: { fullName },
         select: {
           id: true,
           email: true,
-          name: true,
+          fullName: true,
           createdAt: true,
           updatedAt: true,
         },

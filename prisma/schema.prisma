@@ -1,5 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Dishasetu Authentication Schema
+// Comprehensive role-based authentication system
 
 generator client {
   provider = "prisma-client-js"
@@ -10,13 +10,128 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============================================================================
+// ENUMS
+// ============================================================================
 
+enum Role {
+  STUDENT
+  CORPORATE
+  UNIVERSITY
+  MENTOR
+  ADMIN
+
+  @@map("role")
+}
+
+enum AccountStatus {
+  PENDING_EMAIL_VERIFICATION
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  DELETED
+
+  @@map("account_status")
+}
+
+enum TokenType {
+  ACCESS
+  REFRESH
+  RESET_PASSWORD
+  EMAIL_VERIFY
+
+  @@map("token_type")
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+/// User model representing authenticated users in the system
+/// Supports multiple roles with role-based access control
+model User {
+  id               String        @id @default(uuid())
+  fullName         String
+  email            String        @unique @db.VarChar(255)
+  passwordHash     String
+  role             Role
+  status           AccountStatus @default(ACTIVE)
+  emailVerified    Boolean       @default(false)
+  lastLogin        DateTime?
+  loginAttempts    Int           @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+
+  // Relations
+  authTokens       AuthToken[]
+  passwordResets   PasswordReset[]
+  auditLogs        AuditLog[]
+
+  @@unique([email, deletedAt]) // Soft delete support
+  @@index([email])
+  @@index([role])
+  @@index([status])
   @@map("users")
+}
+
+/// Auth tokens for managing JWT and refresh token lifecycle
+model AuthToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @db.Text // Hashed token
+  type      TokenType
+  expiresAt DateTime
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("auth_tokens")
+}
+
+/// Password reset tokens with expiration
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique @db.Text // Hashed token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_resets")
+}
+
+/// Audit logs for tracking authentication events
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String   @db.VarChar(100)
+  resource  String   @db.VarChar(100)
+  details   String?  @db.Text
+  ipAddress String?
+  userAgent String?
+  status    String   @db.VarChar(50) // SUCCESS, FAILED, etc.
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
