@@ -81,16 +81,35 @@ export async function signup(data: SignupRequest): Promise<LoginResponse> {
     // Get default status for role
     const defaultStatus = getDefaultAccountStatus(data.role);
 
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        fullName: data.fullName,
-        email: normalizedEmail,
-        passwordHash,
-        role: data.role,
-        status: defaultStatus as AccountStatus,
-        emailVerified: false, // No email verification in Phase 1
-      },
+    // Create user and, for STUDENT, create linked Student record (Student Journey – Registration & Onboarding)
+    const user = await prisma.$transaction(async (tx) => {
+      const createdUser = await tx.user.create({
+        data: {
+          fullName: data.fullName,
+          email: normalizedEmail,
+          passwordHash,
+          role: data.role,
+          status: defaultStatus as AccountStatus,
+          emailVerified: false, // No email verification in Phase 1
+        },
+      });
+
+      if (data.role === Role.STUDENT) {
+        const studentStatus =
+          defaultStatus === 'ACTIVE'
+            ? AccountStatus.ACTIVE
+            : AccountStatus.PENDING_EMAIL_VERIFICATION;
+        await tx.student.create({
+          data: {
+            user: { connect: { id: createdUser.id } },
+            fullName: data.fullName,
+            email: normalizedEmail,
+            passwordHash,
+            accountStatus: studentStatus,
+          },
+        });
+      }
+      return createdUser;
     });
 
     // Generate tokens

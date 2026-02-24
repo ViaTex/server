@@ -43,6 +43,9 @@ enum TokenType {
   @@map("token_type")
 }
 
+// Student account status (MVP)
+// (VisibilityType, VerificationStatus, GenderChoice removed for MVP – can add back later)
+
 // ============================================================================
 // MODELS
 // ============================================================================
@@ -68,6 +71,10 @@ model User {
   authTokens       AuthToken[]
   passwordResets   PasswordReset[]
   auditLogs        AuditLog[]
+  student          Student?
+  corporate        Corporate?
+  university       University?
+  mentor           Mentor?
 
   @@unique([email, deletedAt]) // Soft delete support
   @@index([email])
@@ -134,4 +141,192 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ============================================================================
+// STUDENT JOURNEY – MVP: students + student_applications only
+// ============================================================================
+// See server/docs/shems_design.md for full design.
+
+/// Single master table: all student data (profile, resume, skills, DES, prefs as JSON/fields)
+/// Linked to User when student registers via main auth (userId); can be standalone for student-only auth.
+model Student {
+  id             String        @id @default(uuid())
+  userId         String?       @unique @map("user_id") // Optional: link to User when registered via /auth/signup
+  fullName       String        @map("full_name")
+  email          String        @unique @db.VarChar(255)
+  phone          String?       @db.VarChar(50)
+  passwordHash   String        @map("password_hash")
+  accountStatus  AccountStatus @default(PENDING_EMAIL_VERIFICATION) @map("account_status")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  // Profile
+  profilePhoto   String?       @map("profile_photo") @db.Text
+  collegeName    String?       @map("college_name") @db.VarChar(255)
+  degree         String?       @db.VarChar(100)
+  branch         String?       @db.VarChar(100)
+  graduationYear Int?         @map("graduation_year")
+  currentCity    String?      @map("current_city") @db.VarChar(100)
+  aboutMe        String?      @map("about_me") @db.Text
+  linkedinUrl    String?      @map("linkedin_url") @db.Text
+  githubUrl      String?      @map("github_url") @db.Text
+  portfolioUrl   String?      @map("portfolio_url") @db.Text
+
+  // Resume
+  resumeFileUrl  String?      @map("resume_file_url") @db.Text
+  resumeAtsScore Int?         @map("resume_ats_score")
+
+  // Skills (JSON): [{ name, level, verified }, ...]
+  skillsJson     Json?        @default("[]") @map("skills_json")
+
+  // Projects (JSON): [{ title, tech[], verified }, ...]
+  projectsJson   Json?        @default("[]") @map("projects_json")
+
+  // DES scores
+  technicalScore    Int?      @map("technical_score")
+  communicationScore Int?    @map("communication_score")
+  aptitudeScore     Int?      @map("aptitude_score")
+  projectScore      Int?      @map("project_score")
+  overallDes        Int?      @map("overall_des")
+
+  // Job preferences (JSON): { roles, locations, job_type, expected_salary }
+  jobPreferencesJson Json?    @default("{}") @map("job_preferences_json")
+
+  // Privacy
+  showPhone    Boolean       @default(true) @map("show_phone")
+  showEmail    Boolean       @default(true) @map("show_email")
+  showResume   Boolean       @default(true) @map("show_resume")
+  showDes      Boolean       @default(true) @map("show_des")
+
+  // Interview prep
+  mockInterviewScore Decimal? @map("mock_interview_score") @db.Decimal(5, 2)
+  mentorFeedback     String?  @map("mentor_feedback") @db.Text
+
+  user         User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications StudentApplication[]
+
+  @@index([email])
+  @@index([userId])
+  @@index([accountStatus])
+  @@map("students")
+}
+
+/// Only other table: student ↔ job applications (many-to-many)
+model StudentApplication {
+  id                 String   @id @default(uuid())
+  studentId          String   @map("student_id")
+  jobId              String   @map("job_id")
+  applicationStatus  String   @map("application_status") @db.VarChar(50)
+  appliedAt          DateTime @default(now()) @map("applied_at")
+  lastUpdated        DateTime @updatedAt @map("last_updated")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  job     Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, jobId])
+  @@index([studentId])
+  @@index([jobId])
+  @@index([applicationStatus])
+  @@map("student_applications")
+}
+
+// ----------------------------------------------------------------------------
+// Jobs (required for student_applications.job_id FK)
+// ----------------------------------------------------------------------------
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  location  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs Job[]
+
+  @@map("companies")
+}
+
+model Job {
+  id             String    @id @default(uuid())
+  companyId      String    @map("company_id")
+  title          String
+  description    String?   @db.Text
+  requiredSkills String[]  @map("required_skills")
+  locationType   String?   @map("location_type")
+  salaryRange    String?   @map("salary_range")
+  postedAt       DateTime  @default(now()) @map("posted_at")
+  expiresAt      DateTime? @map("expires_at")
+  status         String    @default("open")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  company      Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  applications StudentApplication[]
+
+  @@index([companyId])
+  @@index([status])
+  @@map("jobs")
+}
+
+// ----------------------------------------------------------------------------
+// NEW ROLES: CORPORATE, UNIVERSITY, MENTOR
+// ----------------------------------------------------------------------------
+
+model Corporate {
+  id             String        @id @default(uuid())
+  userId         String?       @unique @map("user_id")
+  companyName    String        @map("company_name")
+  email          String        @unique @db.VarChar(255)
+  websiteUrl     String?       @map("website_url") @db.Text
+  passwordHash   String        @map("password_hash")
+  accountStatus  AccountStatus @default(PENDING_EMAIL_VERIFICATION) @map("account_status")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([userId])
+  @@index([accountStatus])
+  @@map("corporates")
+}
+
+model University {
+  id             String        @id @default(uuid())
+  userId         String?       @unique @map("user_id")
+  universityName String        @map("university_name")
+  email          String        @unique @db.VarChar(255)
+  websiteUrl     String?       @map("website_url") @db.Text
+  passwordHash   String        @map("password_hash")
+  accountStatus  AccountStatus @default(PENDING_EMAIL_VERIFICATION) @map("account_status")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([userId])
+  @@index([accountStatus])
+  @@map("universities")
+}
+
+model Mentor {
+  id             String        @id @default(uuid())
+  userId         String?       @unique @map("user_id")
+  fullName       String        @map("full_name")
+  email          String        @unique @db.VarChar(255)
+  designation    String        @db.VarChar(255)
+  linkedinUrl    String        @map("linkedin_url") @db.Text
+  passwordHash   String        @map("password_hash")
+  accountStatus  AccountStatus @default(PENDING_APPROVAL) @map("account_status")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([userId])
+  @@index([accountStatus])
+  @@map("mentors")
 }

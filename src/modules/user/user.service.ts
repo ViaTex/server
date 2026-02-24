@@ -7,21 +7,21 @@ export const userService = {
       select: {
         id: true,
         email: true,
-        name: true,
+        fullName: true,
         createdAt: true,
         updatedAt: true,
       },
     });
   },
 
-  async updateUser(id: string, data: { name?: string }) {
+  async updateUser(id: string, data: { fullName?: string }) {
     return prisma.user.update({
       where: { id },
       data,
       select: {
         id: true,
         email: true,
-        name: true,
+        fullName: true,
         createdAt: true,
         updatedAt: true,
       },

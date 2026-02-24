@@ -7,8 +7,9 @@ export interface TokenPayload {
 }
 
 export const generateToken = (payload: TokenPayload): string => {
+  // @ts-ignore - JWT types issue
   return jwt.sign(payload, config.jwtSecret, {
-    expiresIn: config.jwtExpiresIn,
+    expiresIn: config.jwtAccessExpiresIn,
   });
 };
 

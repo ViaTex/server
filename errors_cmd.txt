@@ -1,0 +1,6 @@
+src/modules/student/student.routes.ts(161,61): error TS6133: 'req' is declared but its value is never read.
+src/modules/student/student.routes.ts(161,61): error TS7006: Parameter 'req' implicitly has an 'any' type.
+src/modules/student/student.routes.ts(161,66): error TS7006: Parameter 'res' implicitly has an 'any' type.
+src/modules/user/user.service.ts(10,9): error TS2353: Object literal may only specify known properties, and 'name' does not exist in type 'UserSelect<DefaultArgs>'.
+src/modules/user/user.service.ts(24,9): error TS2353: Object literal may only specify known properties, and 'name' does not exist in type 'UserSelect<DefaultArgs>'.
+src/utils/jwt.ts(11,23): error TS2339: Property 'jwtExpiresIn' does not exist on type '{ port: string | number; nodeEnv: string; baseUrl: string; corsOrigin: string; databaseUrl: string; jwtSecret: string; jwtRefreshSecret: string; jwtAccessExpiresIn: string; jwtRefreshExpiresIn: string; ... 8 more ...; frontendUrl: string; }'.

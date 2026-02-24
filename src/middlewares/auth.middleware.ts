@@ -160,6 +160,48 @@ export const requireAdmin = requireRole(Role.ADMIN);
 export const authMiddleware = verifyToken;
 
 // ============================================================================
+// STUDENT CONTEXT (for /api/students/* routes – requires STUDENT role and loads student)
+// ============================================================================
+
+export interface StudentAuthenticatedRequest extends AuthenticatedRequest {
+  studentId?: string;
+}
+
+/**
+ * Requires JWT + STUDENT role and loads student by userId; sets req.studentId
+ */
+export const requireStudent = (): ((
+  req: StudentAuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => Promise<void>) => {
+  return async (req: StudentAuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, message: 'Authentication required' });
+        return;
+      }
+      if (req.user.role !== Role.STUDENT) {
+        res.status(403).json({ success: false, message: 'Student access only' });
+        return;
+      }
+      const prisma = (await import('../config/database')).default;
+      const student = await prisma.student.findUnique({
+        where: { userId: req.user.id },
+      });
+      if (!student) {
+        res.status(403).json({ success: false, message: 'Student profile not found' });
+        return;
+      }
+      req.studentId = student.id;
+      next();
+    } catch (error) {
+      res.status(500).json({ success: false, message: 'Authorization check failed' });
+    }
+  };
+};
+
+// ============================================================================
 // ACTIVE ACCOUNT MIDDLEWARE
 // ============================================================================
 
