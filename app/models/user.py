@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import String, Boolean, Integer, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from app.models.oauth_connection import OAuthConnection
     from app.models.refresh_token import RefreshToken
     from app.models.otp import OTP
+    from app.models.student_info import StudentInfo
 
 
 class User(Base):
@@ -82,6 +83,12 @@ class User(Base):
     otps: Mapped[list["OTP"]] = relationship(
         "OTP", 
         back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    student_info: Mapped[Optional["StudentInfo"]] = relationship(
+        "StudentInfo",
+        back_populates="user",
+        uselist=False,  # One-to-One relationship
         cascade="all, delete-orphan"
     )
     
