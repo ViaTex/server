@@ -9,11 +9,11 @@ from fastapi import HTTPException, status
 from app.models.user import User
 from app.models.oauth_connection import OAuthConnection
 from app.core.config import settings
-from app.core.logging import get_logger
+from app.core.secure_logging import get_secure_logger, log_auth_event
 from app.services.otp_service import OTPService
 from app.services.sms_service import SMSService
 
-logger = get_logger(__name__)
+logger = get_secure_logger(__name__)
 
 # Initialize OAuth
 oauth = OAuth()

@@ -5,9 +5,9 @@ from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
 from app.core.config import settings
-from app.core.logging import get_logger
+from app.core.secure_logging import get_secure_logger
 
-logger = get_logger(__name__)
+logger = get_secure_logger(__name__)
 
 
 class EmailService:

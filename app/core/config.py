@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Disasetu"
     APP_ENV: str = "development"
     DEBUG: bool = True
+    LOG_SQL_QUERIES: bool = False  # Set to True only for debugging - logs contain sensitive data
     API_V1_PREFIX: str = "/api/v1"
     
     # Server
