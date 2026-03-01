@@ -1,6 +1,6 @@
 """Student Profile Service Layer"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple, List
 from uuid import UUID, uuid4
 
@@ -132,7 +132,7 @@ class StudentProfileService:
         is_complete, _ = profile.check_mandatory_fields_complete()
         profile.is_complete = is_complete and not data.is_draft
         
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -216,7 +216,7 @@ class StudentProfileService:
         is_complete, _ = profile.check_mandatory_fields_complete()
         profile.is_complete = is_complete and not profile.is_draft
         
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -267,7 +267,7 @@ class StudentProfileService:
                 detail=f"Project with ID {project_id} not found"
             )
         
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -303,7 +303,7 @@ class StudentProfileService:
         profile.completion_percentage = profile.calculate_completion_percentage()
         is_complete, _ = profile.check_mandatory_fields_complete()
         profile.is_complete = is_complete and not profile.is_draft
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -332,7 +332,7 @@ class StudentProfileService:
         projects = profile.projects or []
         projects.append(project_data)
         profile.projects = projects
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -361,7 +361,7 @@ class StudentProfileService:
         profile.completion_percentage = profile.calculate_completion_percentage()
         is_complete, _ = profile.check_mandatory_fields_complete()
         profile.is_complete = is_complete and not profile.is_draft
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -390,7 +390,7 @@ class StudentProfileService:
         
         profile.bio = bio
         profile.bio_is_ai_generated = is_ai_generated
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)
@@ -453,7 +453,7 @@ class StudentProfileService:
         
         profile.is_draft = False
         profile.is_complete = True
-        profile.updated_at = datetime.utcnow()
+        profile.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(profile)

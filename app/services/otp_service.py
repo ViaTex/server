@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import secrets
 import random
@@ -56,7 +56,7 @@ class OTPService:
         # Calculate expiration
         if expire_minutes is None:
             expire_minutes = settings.OTP_EXPIRE_MINUTES
-        expires_at = datetime.utcnow() + timedelta(minutes=expire_minutes)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
         
         # Create OTP record
         otp = OTP(
@@ -140,7 +140,7 @@ class OTPService:
         
         # Mark as used
         otp.used = True
-        otp.used_at = datetime.utcnow()
+        otp.used_at = datetime.now(timezone.utc)
         await db.commit()
         
         logger.info("OTP verified successfully", user_id=str(user_id), otp_type=otp_type)
@@ -155,7 +155,7 @@ class OTPService:
             Number of deleted OTPs
         """
         result = await db.execute(
-            delete(OTP).where(OTP.expires_at < datetime.utcnow())
+            delete(OTP).where(OTP.expires_at < datetime.now(timezone.utc))
         )
         await db.commit()
         

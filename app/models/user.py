@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 from sqlalchemy import String, Boolean, Integer, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -59,13 +59,13 @@ class User(Base):
     last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
-        default=datetime.utcnow, 
+        default=lambda: datetime.now(timezone.utc), 
         nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
-        default=datetime.utcnow, 
-        onupdate=datetime.utcnow, 
+        default=lambda: datetime.now(timezone.utc), 
+        onupdate=lambda: datetime.now(timezone.utc), 
         nullable=False
     )
     
