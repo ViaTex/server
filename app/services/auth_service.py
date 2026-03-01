@@ -1,182 +1,296 @@
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from typing import Tuple
-import uuid
-from datetime import datetime, timedelta, timezone
-import structlog
+from datetime import datetime, timedelta
+from typing import Optional, Tuple
+from uuid import UUID
+import secrets
 
-from app.models.user import Student, Corporate, College, Admin, UserSession, UserStatus
-from app.models.user import EmailOTP
-from app.core.security import SecurityManager
-from app.schemas.auth import (
-    StudentRegisterRequest,
-    CorporateRegisterRequest,
-    CollegeRegisterRequest
-)
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+from fastapi import HTTPException, status
+
+from app.models.user import User
+from app.models.refresh_token import RefreshToken
+from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.core.config import settings
+from app.core.logging import get_logger
+from app.schemas.auth import UserRegisterRequest, UserLoginRequest, TokenResponse, UserResponse
+from app.services.otp_service import OTPService
+from app.services.email_service import EmailService
+from app.services.sms_service import SMSService
 
-logger = structlog.get_logger()
+logger = get_logger(__name__)
+
 
 class AuthService:
-    def __init__(self, db: Session):
-        self.db = db
-
-    def _is_email_taken(self, email: str) -> bool:
-        if self.db.query(Student).filter(Student.email == email).first(): return True
-        if self.db.query(Corporate).filter(Corporate.email == email).first(): return True
-        if self.db.query(College).filter(College.email == email).first(): return True
-        if self.db.query(Admin).filter(Admin.email == email).first(): return True
-        return False
-
-    async def send_signup_email_otp(self, email: str) -> None:
-        if self._is_email_taken(email):
-            raise ValueError("Email already registered")
-
-        code = str(uuid.uuid4().int)[0:6]
-        self.db.query(EmailOTP).filter(EmailOTP.email == email, EmailOTP.used == False).delete()
-        otp = EmailOTP(
-            email=email,
-            code=code,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    """Service for authentication operations"""
+    
+    @staticmethod
+    async def register_user(
+        db: AsyncSession,
+        register_data: UserRegisterRequest
+    ) -> Tuple[User, str, str]:
+        """
+        Register a new user and send verification OTPs
+        
+        Returns:
+            Tuple of (user, email_otp, phone_otp)
+        """
+        # Check if email already exists
+        stmt = select(User).where(User.email == register_data.email)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Check if phone already exists
+        stmt = select(User).where(User.phone_number == register_data.phone_number)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Phone number already registered"
+            )
+        
+        # Create user
+        user = User(
+            email=register_data.email,
+            phone_number=register_data.phone_number,
+            password_hash=hash_password(register_data.password),
+            account_type=register_data.account_type,
+            role=register_data.role,
+            email_verified=False,
+            phone_verified=False,
+            account_status="pending"
         )
-        self.db.add(otp)
-        self.db.commit()
-        logger.info(f"Signup OTP generated for {email}: {code}")
-        # MOCK SEND EMAIL: In a real app, integrate SMTP here.
-
-    def _consume_email_otp(self, email: str, code: str) -> None:
-        record = self.db.query(EmailOTP).filter(
-            EmailOTP.email == email,
-            EmailOTP.code == code,
-            EmailOTP.used == False,
-            EmailOTP.expires_at > datetime.now(timezone.utc),
-        ).first()
-        if not record:
-            raise ValueError("Invalid or expired OTP")
-        record.used = True
-        self.db.commit()
-
-    async def verify_otp_and_register_student(self, code: str, request: StudentRegisterRequest) -> Student:
-        self._consume_email_otp(request.email, code)
-        return await self.register_student(request)
-
-    async def verify_otp_and_register_corporate(self, code: str, request: CorporateRegisterRequest) -> Corporate:
-        self._consume_email_otp(request.email, code)
-        return await self.register_corporate(request)
-
-    async def verify_otp_and_register_college(self, code: str, request: CollegeRegisterRequest) -> College:
-        self._consume_email_otp(request.email, code)
-        return await self.register_college(request)
-
-    async def register_student(self, request: StudentRegisterRequest) -> Student:
-        try:
-            if self._is_email_taken(request.email):
-                raise ValueError("Email already registered")
-
-            student = Student(
-                id=uuid.uuid4(),
-                email=request.email,
-                password_hash=SecurityManager.get_password_hash(request.password),
-                name=request.name,
-                phone=request.phone,
-                institution=request.institution
+        
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        
+        logger.info(
+            "User registered",
+            user_id=str(user.id),
+            email=user.email,
+            role=user.role
+        )
+        
+        # Generate OTPs
+        email_otp_obj = await OTPService.create_otp(db, user.id, "email_verify")
+        phone_otp_obj = await OTPService.create_otp(db, user.id, "phone_verify")
+        
+        # Send OTPs
+        await EmailService.send_otp_email(user.email, email_otp_obj.otp_code)
+        await SMSService.send_otp_sms(user.phone_number, phone_otp_obj.otp_code)
+        
+        return user, email_otp_obj.otp_code, phone_otp_obj.otp_code
+    
+    @staticmethod
+    async def verify_dual_otp(
+        db: AsyncSession,
+        user_id: UUID,
+        email_otp: str,
+        phone_otp: str
+    ) -> User:
+        """Verify both email and phone OTPs to activate account"""
+        
+        # Get user
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
             )
-            self.db.add(student)
-            self.db.commit()
-            self.db.refresh(student)
-            return student
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Student registration failed", error=str(e), email=request.email)
-            raise
-
-    async def register_corporate(self, request: CorporateRegisterRequest) -> Corporate:
-        try:
-            if self._is_email_taken(request.email):
-                raise ValueError("Email already registered")
-
-            corporate = Corporate(
-                id=uuid.uuid4(),
-                email=request.email,
-                password_hash=SecurityManager.get_password_hash(request.password),
-                name=request.contact_person or request.company_name,
-                company_name=request.company_name
+        
+        # Verify email OTP
+        email_success, email_error = await OTPService.verify_otp(
+            db, user_id, email_otp, "email_verify"
+        )
+        
+        if not email_success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Email verification failed: {email_error}"
             )
-            self.db.add(corporate)
-            self.db.commit()
-            self.db.refresh(corporate)
-            return corporate
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Corporate registration failed", error=str(e), email=request.email)
-            raise
-
-    async def register_college(self, request: CollegeRegisterRequest) -> College:
-        try:
-            if self._is_email_taken(request.email):
-                raise ValueError("Email already registered")
-
-            college = College(
-                id=uuid.uuid4(),
-                email=request.email,
-                password_hash=SecurityManager.get_password_hash(request.password),
-                name=request.contact_person_name or request.college_name,
-                college_name=request.college_name,
-                status=UserStatus.INACTIVE
+        
+        # Verify phone OTP
+        phone_success, phone_error = await OTPService.verify_otp(
+            db, user_id, phone_otp, "phone_verify"
+        )
+        
+        if not phone_success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Phone verification failed: {phone_error}"
             )
-            self.db.add(college)
-            self.db.commit()
-            self.db.refresh(college)
-            return college
-        except Exception as e:
-            self.db.rollback()
-            logger.error("College registration failed", error=str(e), email=request.email)
-            raise
-
-    async def login(self, email: str, password: str, user_type: str) -> Tuple[object, str, str]:
-        try:
-            if user_type == "student":
-                user = self.db.query(Student).filter(Student.email == email).first()
-            elif user_type == "corporate":
-                user = self.db.query(Corporate).filter(Corporate.email == email).first()
-            elif user_type == "college":
-                user = self.db.query(College).filter(College.email == email).first()
-            elif user_type == "admin":
-                user = self.db.query(Admin).filter(Admin.email == email).first()
-            else:
-                raise ValueError("Invalid user type")
-
-            if not user:
-                raise ValueError("User not found")
-
-            if not SecurityManager.verify_password(password, user.password_hash):
-                raise ValueError("Invalid password")
-
-            user.last_login = datetime.now(timezone.utc)
-            self.db.commit()
-
-            access_token = SecurityManager.create_access_token(
-                subject=str(user.id),
-                user_type=user_type,
-                tenant_id=getattr(user, 'tenant_id', "default")
+        
+        # Update user status
+        user.email_verified = True
+        user.phone_verified = True
+        user.account_status = "active"
+        
+        await db.commit()
+        await db.refresh(user)
+        
+        logger.info("User account activated", user_id=str(user.id))
+        
+        return user
+    
+    @staticmethod
+    async def login_user(
+        db: AsyncSession,
+        login_data: UserLoginRequest,
+        device_ip: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Tuple[str, str, User]:
+        """
+        Authenticate user and create session
+        
+        Returns:
+            Tuple of (access_token, refresh_token, user)
+        """
+        # Get user by email
+        stmt = select(User).where(User.email == login_data.email)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
             )
-            refresh_token = SecurityManager.create_refresh_token(
-                subject=str(user.id),
-                tenant_id=getattr(user, 'tenant_id', "default")
+        
+        # Check if account is locked
+        if user.locked_until and user.locked_until > datetime.utcnow():
+            remaining = (user.locked_until - datetime.utcnow()).total_seconds() / 60
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Account is locked. Try again in {int(remaining)} minutes."
             )
-
-            session = UserSession(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                user_type=user_type,
-                session_token=access_token,
-                refresh_token=refresh_token,
-                expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        
+        # Verify password
+        if not user.password_hash or not verify_password(login_data.password, user.password_hash):
+            # Increment failed attempts
+            user.failed_login_attempts += 1
+            
+            # Lock account if max attempts reached
+            if user.failed_login_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                user.locked_until = datetime.utcnow() + timedelta(minutes=settings.ACCOUNT_LOCKOUT_MINUTES)
+                await db.commit()
+                
+                logger.warning(
+                    "Account locked due to failed login attempts",
+                    user_id=str(user.id),
+                    attempts=user.failed_login_attempts
+                )
+                
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Account locked due to too many failed attempts. Try again in {settings.ACCOUNT_LOCKOUT_MINUTES} minutes."
+                )
+            
+            await db.commit()
+            
+            remaining = settings.MAX_LOGIN_ATTEMPTS - user.failed_login_attempts
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Incorrect email or password. {remaining} attempts remaining."
             )
-            self.db.add(session)
-            self.db.commit()
-
-            return user, access_token, refresh_token
-        except Exception as e:
-            logger.error("Login failed", error=str(e), email=email, user_type=user_type)
-            raise
+        
+        # Check if account is active
+        if user.account_status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is not active. Please complete email and phone verification."
+            )
+        
+        # Reset failed attempts and update last login
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.last_login_at = datetime.utcnow()
+        
+        # Create tokens
+        access_token = create_access_token({
+            "sub": str(user.id),
+            "email": user.email,
+            "account_type": user.account_type,
+            "role": user.role
+        })
+        
+        refresh_token_str = create_refresh_token(str(user.id))
+        
+        # Store refresh token
+        refresh_token = RefreshToken(
+            user_id=user.id,
+            token=refresh_token_str,
+            expires_at=datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+            device_ip=device_ip,
+            user_agent=user_agent
+        )
+        
+        db.add(refresh_token)
+        await db.commit()
+        await db.refresh(user)
+        
+        logger.info("User logged in", user_id=str(user.id), email=user.email)
+        
+        return access_token, refresh_token_str, user
+    
+    @staticmethod
+    async def logout_user(db: AsyncSession, refresh_token: str) -> bool:
+        """Revoke refresh token on logout"""
+        
+        stmt = select(RefreshToken).where(RefreshToken.token == refresh_token)
+        result = await db.execute(stmt)
+        token = result.scalar_one_or_none()
+        
+        if token:
+            token.is_revoked = True
+            token.revoked_at = datetime.utcnow()
+            await db.commit()
+            
+            logger.info("User logged out", user_id=str(token.user_id))
+            return True
+        
+        return False
+    
+    @staticmethod
+    async def refresh_access_token(db: AsyncSession, refresh_token: str) -> Tuple[str, User]:
+        """Generate new access token from refresh token"""
+        
+        # Find refresh token
+        stmt = select(RefreshToken).where(RefreshToken.token == refresh_token)
+        result = await db.execute(stmt)
+        token = result.scalar_one_or_none()
+        
+        if not token or not token.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired refresh token"
+            )
+        
+        # Get user
+        stmt = select(User).where(User.id == token.user_id)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user or user.account_status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is not active"
+            )
+        
+        # Create new access token
+        access_token = create_access_token({
+            "sub": str(user.id),
+            "email": user.email,
+            "account_type": user.account_type,
+            "role": user.role
+        })
+        
+        logger.info("Access token refreshed", user_id=str(user.id))
+        
+        return access_token, user
