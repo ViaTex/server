@@ -31,7 +31,7 @@ def get_ssl_config():
 # Create async engine
 engine = create_async_engine(
     get_database_url(),
-    echo=settings.DEBUG,
+    echo=settings.LOG_SQL_QUERIES,  # Controlled by LOG_SQL_QUERIES setting (default: False for security)
     pool_size=settings.DATABASE_POOL_SIZE,
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_pre_ping=True,

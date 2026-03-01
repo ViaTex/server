@@ -7,6 +7,7 @@ from structlog.processors import (
     UnicodeDecoder,
 )
 from structlog.stdlib import add_log_level, add_logger_name
+from app.core.config import settings
 
 
 def setup_logging():
@@ -17,6 +18,11 @@ def setup_logging():
         format="%(message)s",
         level=logging.INFO,
     )
+    
+    # Control SQLAlchemy query logging (security: prevents exposing sensitive data)
+    sql_log_level = logging.INFO if settings.LOG_SQL_QUERIES else logging.WARNING
+    logging.getLogger('sqlalchemy.engine').setLevel(sql_log_level)
+    logging.getLogger('sqlalchemy.pool').setLevel(sql_log_level)
     
     structlog.configure(
         processors=[

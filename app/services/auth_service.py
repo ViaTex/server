@@ -11,13 +11,13 @@ from app.models.user import User
 from app.models.refresh_token import RefreshToken
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from app.core.config import settings
-from app.core.logging import get_logger
+from app.core.secure_logging import get_secure_logger, log_auth_event, log_security_event
 from app.schemas.auth import UserRegisterRequest, UserLoginRequest, TokenResponse, UserResponse
 from app.services.otp_service import OTPService
 from app.services.email_service import EmailService
 from app.services.sms_service import SMSService
 
-logger = get_logger(__name__)
+logger = get_secure_logger(__name__)
 
 
 class AuthService:
@@ -68,11 +68,14 @@ class AuthService:
         await db.commit()
         await db.refresh(user)
         
-        logger.info(
+        # Secure logging - email is automatically masked in production
+        log_auth_event(
+            logger,
             "User registered",
             user_id=str(user.id),
-            email=user.email,
-            role=user.role
+            email=user.email,  # Will be masked: r***@gmail.com
+            role=user.role,
+            account_type=user.account_type
         )
         
         # Generate OTPs
@@ -135,7 +138,7 @@ class AuthService:
         await db.commit()
         await db.refresh(user)
         
-        logger.info("User account activated", user_id=str(user.id))
+        log_auth_event(logger, "User account activated", user_id=str(user.id))
         
         return user
     
@@ -181,10 +184,13 @@ class AuthService:
                 user.locked_until = datetime.utcnow() + timedelta(minutes=settings.ACCOUNT_LOCKOUT_MINUTES)
                 await db.commit()
                 
-                logger.warning(
+                # Security event - no PII logged
+                log_security_event(
+                    logger,
                     "Account locked due to failed login attempts",
                     user_id=str(user.id),
-                    attempts=user.failed_login_attempts
+                    attempts=user.failed_login_attempts,
+                    lockout_minutes=settings.ACCOUNT_LOCKOUT_MINUTES
                 )
                 
                 raise HTTPException(
@@ -235,7 +241,15 @@ class AuthService:
         await db.commit()
         await db.refresh(user)
         
-        logger.info("User logged in", user_id=str(user.id), email=user.email)
+        # Secure logging - email masked, token never logged
+        log_auth_event(
+            logger,
+            "User logged in",
+            user_id=str(user.id),
+            email=user.email,  # Masked in production
+            account_type=user.account_type,
+            role=user.role
+        )
         
         return access_token, refresh_token_str, user
     
@@ -252,7 +266,7 @@ class AuthService:
             token.revoked_at = datetime.utcnow()
             await db.commit()
             
-            logger.info("User logged out", user_id=str(token.user_id))
+            log_auth_event(logger, "User logged out", user_id=str(token.user_id))
             return True
         
         return False
@@ -291,6 +305,6 @@ class AuthService:
             "role": user.role
         })
         
-        logger.info("Access token refreshed", user_id=str(user.id))
+        log_auth_event(logger, "Access token refreshed", user_id=str(user.id))
         
         return access_token, user

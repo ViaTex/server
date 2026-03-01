@@ -9,9 +9,9 @@ from uuid import UUID
 from app.models.otp import OTP
 from app.models.user import User
 from app.core.config import settings
-from app.core.logging import get_logger
+from app.core.secure_logging import get_secure_logger, log_auth_event
 
-logger = get_logger(__name__)
+logger = get_secure_logger(__name__)
 
 
 class OTPService:
