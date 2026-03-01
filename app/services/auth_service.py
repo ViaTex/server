@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 from uuid import UUID
 import secrets
@@ -167,8 +167,8 @@ class AuthService:
             )
         
         # Check if account is locked
-        if user.locked_until and user.locked_until > datetime.utcnow():
-            remaining = (user.locked_until - datetime.utcnow()).total_seconds() / 60
+        if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+            remaining = (user.locked_until - datetime.now(timezone.utc)).total_seconds() / 60
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Account is locked. Try again in {int(remaining)} minutes."
@@ -181,7 +181,7 @@ class AuthService:
             
             # Lock account if max attempts reached
             if user.failed_login_attempts >= settings.MAX_LOGIN_ATTEMPTS:
-                user.locked_until = datetime.utcnow() + timedelta(minutes=settings.ACCOUNT_LOCKOUT_MINUTES)
+                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCOUNT_LOCKOUT_MINUTES)
                 await db.commit()
                 
                 # Security event - no PII logged
@@ -208,15 +208,29 @@ class AuthService:
         
         # Check if account is active
         if user.account_status != "active":
+            # Resend OTPs so the user can verify
+            try:
+                email_otp_obj = await OTPService.create_otp(db, user.id, "email_verify")
+                phone_otp_obj = await OTPService.create_otp(db, user.id, "phone_verify")
+                await EmailService.send_otp_email(user.email, email_otp_obj.otp_code)
+                await SMSService.send_otp_sms(user.phone_number, phone_otp_obj.otp_code)
+            except Exception:
+                pass  # Best-effort OTP resend
+            
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is not active. Please complete email and phone verification."
+                detail={
+                    "message": "Account is not active. Please complete email and phone verification.",
+                    "user_id": str(user.id),
+                    "email": user.email,
+                    "requires_verification": True
+                }
             )
         
         # Reset failed attempts and update last login
         user.failed_login_attempts = 0
         user.locked_until = None
-        user.last_login_at = datetime.utcnow()
+        user.last_login_at = datetime.now(timezone.utc)
         
         # Create tokens
         access_token = create_access_token({
@@ -232,7 +246,7 @@ class AuthService:
         refresh_token = RefreshToken(
             user_id=user.id,
             token=refresh_token_str,
-            expires_at=datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
             device_ip=device_ip,
             user_agent=user_agent
         )
@@ -263,7 +277,7 @@ class AuthService:
         
         if token:
             token.is_revoked = True
-            token.revoked_at = datetime.utcnow()
+            token.revoked_at = datetime.now(timezone.utc)
             await db.commit()
             
             log_auth_event(logger, "User logged out", user_id=str(token.user_id))

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from sqlalchemy import String, DateTime, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
@@ -52,7 +52,7 @@ class OTP(Base):
     # Audit
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
-        default=datetime.utcnow, 
+        default=lambda: datetime.now(timezone.utc), 
         nullable=False
     )
     
@@ -65,7 +65,7 @@ class OTP(Base):
     @property
     def is_expired(self) -> bool:
         """Check if OTP is expired"""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     @property
     def is_valid(self) -> bool:

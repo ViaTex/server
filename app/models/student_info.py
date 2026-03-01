@@ -1,7 +1,7 @@
 """Student Profile Model - One-to-One relationship with User"""
 
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import TYPE_CHECKING, Optional, List
 from sqlalchemy import String, Boolean, Date, DateTime, Text, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -109,13 +109,13 @@ class StudentInfo(Base):
     # Audit timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
         nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
         nullable=False
     )
     

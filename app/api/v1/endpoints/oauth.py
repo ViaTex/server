@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Cookie
 from fastapi.responses import RedirectResponse
@@ -94,12 +94,11 @@ async def google_callback(
         
         # Store refresh token
         from app.models.refresh_token import RefreshToken
-        from datetime import datetime
         
         refresh_token_obj = RefreshToken(
             user_id=user.id,
             token=refresh_token_str,
-            expires_at=datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
             device_ip=request.client.host,
             user_agent=request.headers.get("user-agent")
         )
@@ -205,12 +204,11 @@ async def linkedin_callback(
         
         # Store refresh token
         from app.models.refresh_token import RefreshToken
-        from datetime import datetime
         
         refresh_token_obj = RefreshToken(
             user_id=user.id,
             token=refresh_token_str,
-            expires_at=datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
             device_ip=request.client.host,
             user_agent=request.headers.get("user-agent")
         )
@@ -303,12 +301,11 @@ async def verify_oauth_phone(
     
     # Store refresh token
     from app.models.refresh_token import RefreshToken
-    from datetime import datetime
     
     refresh_token_obj = RefreshToken(
         user_id=user.id,
         token=refresh_token_str,
-        expires_at=datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
         device_ip=request.client.host,
         user_agent=request.headers.get("user-agent")
     )
