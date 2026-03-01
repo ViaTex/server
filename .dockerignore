@@ -1,0 +1,75 @@
+# ============================================================
+# .dockerignore — Disasetu Server
+# Prevents unnecessary files from being sent to the Docker daemon,
+# reducing build context size and improving build speed.
+# ============================================================
+
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+wheels/
+sdist/
+develop-eggs/
+.installed.cfg
+
+# Virtual environments (never copy host venv into the image)
+venv/
+env/
+ENV/
+.venv/
+
+# Environment files (secrets must be injected at runtime, not baked in)
+.env
+.env.*
+
+# IDE & editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation (not needed at runtime)
+docs/
+*.md
+LICENSE
+
+# Nginx config (runs in its own container / host)
+nginx.conf
+
+# Database files
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker files (prevent recursive copies)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# AI directory (currently empty)
+ai/
+
+# OS files
+Thumbs.db
+.DS_Store
