@@ -45,6 +45,7 @@ class BaseUser(Base):
 class Student(BaseUser):
     __tablename__ = "students"
     
+    bio = Column(Text, nullable=True)
     institution = Column(String(255), nullable=True)
     degree = Column(String(100), nullable=True)
     branch = Column(String(100), nullable=True)

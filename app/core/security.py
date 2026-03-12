@@ -166,9 +166,10 @@ class SecurityManager:
             "iss": "disha-platform"
         }
         
+        secret = settings.RESUME_BUILDER_JWT_SECRET or settings.SECRET_KEY
         encoded_jwt = jwt.encode(
-            to_encode, 
-            settings.RESUME_BUILDER_JWT_SECRET, 
+            to_encode,
+            secret,
             algorithm=settings.ALGORITHM
         )
         

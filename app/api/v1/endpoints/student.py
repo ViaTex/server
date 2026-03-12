@@ -1,8 +1,13 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status
 import cloudinary
 import cloudinary.uploader
 import os
+from sqlalchemy.orm import Session
 from app.core.config import settings
+from app.core.database import get_db
+from app.core.security import get_current_student
+from app.schemas.student import StudentProfileUpdate, StudentProfileResponse
+from app.models.user import Student
 
 router = APIRouter()
 
@@ -48,3 +53,37 @@ async def upload_resume(resume: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/profile", response_model=StudentProfileResponse)
+async def get_student_profile(
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the current student's profile from the database.
+    """
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    return student
+
+@router.patch("/profile", response_model=StudentProfileResponse)
+async def update_student_profile(
+    profile_data: StudentProfileUpdate,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    """
+    Update the current student's profile.
+    """
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    
+    update_data = profile_data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(student, key, value)
+    
+    db.commit()
+    db.refresh(student)
+    return student
