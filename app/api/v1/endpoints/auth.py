@@ -90,3 +90,12 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred during login")
+
+@router.post("/logout")
+async def logout():
+    # In a JWT stateless auth system, true logout happens client-side by destroying the tokens.
+    # Currently, we just return a success message so the client can resolve the logout sequence safely.
+    return {
+        "message": "Logged out successfully",
+        "status": "success"
+    }
