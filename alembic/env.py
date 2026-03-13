@@ -111,28 +111,22 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = None
-    connection_successful = False
-    
-    try:
-        connectable = engine_from_config(
-            config.get_section(config.config_ini_section, {}),
-            prefix="sqlalchemy.",
-            poolclass=pool.NullPool,
-        )
-        
-        # Test connection
-        with connectable.connect() as test_conn:
-            connection_successful = True
-        
-    except Exception as e:
-        # Connection error - try offline mode
-        print(f"[WARNING] Database connection failed: {e}")
-        print("[INFO] Falling back to offline mode...")
-        run_migrations_offline()
-        return
-    
-    # If connection successful, run migrations
+    from sqlalchemy import create_engine
+
+    database_url = config.get_main_option("sqlalchemy.url")
+
+    # Neon (and most cloud Postgres providers) require SSL.
+    # Also set a generous connect_timeout so slow cold-starts don't fail.
+    connect_args = {"connect_timeout": 30}
+    if database_url and "neon.tech" in database_url:
+        connect_args["sslmode"] = "require"
+
+    connectable = create_engine(
+        database_url,
+        poolclass=pool.NullPool,
+        connect_args=connect_args,
+    )
+
     def include_object(object, name, type_, reflected, compare_to):
         if type_ == "table" and reflected and compare_to is None:
             return False
@@ -140,7 +134,7 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, 
+            connection=connection,
             target_metadata=target_metadata,
             transaction_per_migration=True,
             compare_type=True,
