@@ -77,6 +77,7 @@ class Student(BaseUser):
     linkedin_profile = Column(String(500), nullable=True)
     github_profile = Column(String(500), nullable=True)
     personal_website = Column(String(500), nullable=True)
+    resume_url = Column(String(1000), nullable=True)
     
     college_id = Column(String(255), nullable=True)
 

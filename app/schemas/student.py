@@ -35,6 +35,7 @@ class StudentProfileBase(BaseModel):
     linkedin_profile: Optional[str] = None
     github_profile: Optional[str] = None
     personal_website: Optional[str] = None
+    resume_url: Optional[str] = None
 
 class StudentProfileUpdate(StudentProfileBase):
     pass
