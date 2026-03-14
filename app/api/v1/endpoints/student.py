@@ -26,9 +26,14 @@ except Exception as e:
     print(f"Error configuring cloudinary: {e}")
 
 @router.post("/upload-resume")
-async def upload_resume(resume: UploadFile = File(...)):
+async def upload_resume(
+    resume: UploadFile = File(...),
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
     """
     Endpoint for uploading a student resume to cloudinary.
+    Requires authentication (student JWT token).
     """
     if not resume:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -44,10 +49,18 @@ async def upload_resume(resume: UploadFile = File(...)):
             folder="student_resumes" 
         )
         
-        # In a real app, you would save upload_result["secure_url"] into the database associated with the user.
+        secure_url = upload_result.get("secure_url")
+
+        # Persist the resume URL to the student's profile
+        if secure_url:
+            student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+            if student:
+                student.resume_url = secure_url
+                db.commit()
+
         return {
             "message": "Resume uploaded successfully",
-            "url": upload_result.get("secure_url"),
+            "url": secure_url,
             "public_id": upload_result.get("public_id"),
             "format": upload_result.get("format")
         }
