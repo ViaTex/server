@@ -51,7 +51,6 @@ class ResumeParsedResponse(BaseModel):
     # Experience
     extracurricular_activities: List[str] = Field(default_factory=list)
     internship_experience: List[str] = Field(default_factory=list)
-    project_details: str = ""
 
     # Links
     linkedin_profile: str = ""

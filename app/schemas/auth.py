@@ -30,7 +30,6 @@ class StudentRegisterRequest(BaseModel):
     language_proficiency: Optional[str] = None
     extracurricular_activities: Optional[str] = None
     internship_experience: Optional[str] = None
-    project_details: Optional[str] = None
     linkedin_profile: Optional[str] = None
     github_profile: Optional[str] = None
     personal_website: Optional[str] = None
