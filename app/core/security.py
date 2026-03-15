@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT token security
-security = HTTPBearer()
+# NOTE: HTTPBearer(auto_error=True) returns 403 when missing.
+# We want missing/invalid JWT to be 401 for protected routes.
+security = HTTPBearer(auto_error=False)
 # Optional bearer that does not auto-error when missing
 security_optional = HTTPBearer(auto_error=False)
 
@@ -179,9 +181,15 @@ class SecurityManager:
 
 # Dependency to get current user from token
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> dict:
     """Get current user from JWT token"""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     token = credentials.credentials
     payload = SecurityManager.verify_token(token)
     

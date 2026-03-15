@@ -72,7 +72,10 @@ class Student(BaseUser):
     extracurricular_activities = Column(Text, nullable=True)
     
     internship_experience = Column(Text, nullable=True)
-    project_details = Column(Text, nullable=True)
+
+    # Structured sections (stored inside the students table for now)
+    projects = Column(JSONB, nullable=False, default=list)
+    custom_achievements = Column(JSONB, nullable=False, default=list)
     
     linkedin_profile = Column(String(500), nullable=True)
     github_profile = Column(String(500), nullable=True)
