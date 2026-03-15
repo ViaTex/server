@@ -1,0 +1,14 @@
+[Unit]
+Description=DishaSetu FastAPI
+After=network.target postgresql.service
+
+[Service]
+User=dishasetu
+Group=dishasetu
+WorkingDirectory=/home/dishasetu/server
+Environment="PATH=/home/dishasetu/server/venv/bin"
+ExecStart=/home/dishasetu/server/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
