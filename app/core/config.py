@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
 
+    # REDIS
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Embeddings
+    RESUME_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+
     # Resume builder SSO (optional; falls back to SECRET_KEY if unset)
     RESUME_BUILDER_JWT_SECRET: str = ""
 

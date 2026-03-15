@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+
+from app.core.security import get_current_student
 
 from ai.schemas import ResumeParsedResponse
 from ai.services.resume_parser import ResumeParserService
@@ -17,8 +19,14 @@ router = APIRouter(prefix="/ai", tags=["ai"])
     response_model=ResumeParsedResponse,
     status_code=status.HTTP_200_OK,
 )
-async def parse_resume(resume: UploadFile = File(...)) -> ResumeParsedResponse:
+async def parse_resume(
+    resume: UploadFile = File(...),
+    current_user: dict = Depends(get_current_student),
+) -> ResumeParsedResponse:
     """Upload a PDF resume and return structured fields extracted via Groq+LangChain."""
+
+    # JWT protection (required): only authenticated students can parse resumes.
+    _ = current_user
 
     if resume is None:
         raise HTTPException(status_code=400, detail="No file provided")
