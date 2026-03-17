@@ -54,6 +54,13 @@ def _parse_int(value: Any) -> Optional[int]:
     return None
 
 
+def _year_to_date_str(value: Any) -> str:
+    year = _parse_int(value)
+    if not year:
+        return ""
+    return f"{year:04d}-01-01"
+
+
 def _parse_float(value: Any) -> Optional[float]:
     if value is None:
         return None
@@ -181,6 +188,74 @@ def _achievements_to_student_json(custom_achievements: Any) -> list[dict]:
     return out
 
 
+def _infer_education_level(degree: Any) -> str:
+    if not degree or not isinstance(degree, str):
+        return "Other"
+    s = degree.lower()
+    if "diploma" in s:
+        return "Diploma"
+    if "b.tech" in s or "btech" in s or "bachelor" in s:
+        return "UG"
+    if "m.tech" in s or "mtech" in s or "master" in s:
+        return "PG"
+    if "12" in s or "xii" in s:
+        return "12th"
+    if "10" in s or "x" in s:
+        return "10th"
+    return "Other"
+
+
+def _education_entry_from_parsed(parsed: Any) -> Optional[dict]:
+    institution = getattr(parsed, "institution", None) or ""
+    degree = getattr(parsed, "degree", None) or ""
+    branch = getattr(parsed, "branch", None) or ""
+    major = getattr(parsed, "major", None) or ""
+    graduation_year = getattr(parsed, "graduation_year", None)
+    btech_cgpa = getattr(parsed, "btech_cgpa", None)
+
+    if not any([institution, degree, branch, major, graduation_year, btech_cgpa]):
+        return None
+
+    level = _infer_education_level(degree)
+    custom_level = None
+    if level == "Other":
+        custom_level = degree.strip() if isinstance(degree, str) and degree.strip() else "Not specified"
+
+    description_parts = []
+    if branch:
+        description_parts.append(f"Branch: {branch}")
+    if major:
+        description_parts.append(f"Major: {major}")
+
+    return {
+        "id": str(uuid.uuid4()),
+        "level": level,
+        "custom_level": custom_level or "",
+        "institution": institution.strip() if isinstance(institution, str) and institution.strip() else "Unknown",
+        "start_date": "",
+        "end_date": _year_to_date_str(graduation_year),
+        "score": str(btech_cgpa).strip() if btech_cgpa is not None else "",
+        "description": "; ".join(description_parts),
+    }
+
+
+def _education_entry_from_score(level: str, score: Any) -> Optional[dict]:
+    parsed_score = _parse_float(score)
+    if parsed_score is None:
+        return None
+
+    return {
+        "id": str(uuid.uuid4()),
+        "level": level,
+        "custom_level": "",
+        "institution": "Unknown",
+        "start_date": "",
+        "end_date": "",
+        "score": str(parsed_score),
+        "description": "",
+    }
+
+
 def _build_embedding_inputs(student: Student) -> list[EmbeddingInput]:
     skills_text = "\n".join(
         [
@@ -260,15 +335,22 @@ async def _process_job(db: Session, payload: dict) -> None:
     _set_if_blank(student, "state", parsed.state or None)
     _set_if_blank(student, "country", parsed.country or None)
 
-    _set_if_blank(student, "institution", parsed.institution or None)
-    _set_if_blank(student, "degree", parsed.degree or None)
-    _set_if_blank(student, "branch", parsed.branch or None)
-    _set_if_blank(student, "major", parsed.major or None)
-    _set_if_blank(student, "graduation_year", _parse_int(parsed.graduation_year))
+    if _is_blank(student.education):
+        education_entries = []
+        main_entry = _education_entry_from_parsed(parsed)
+        if main_entry:
+            education_entries.append(main_entry)
 
-    _set_if_blank(student, "tenth_grade_percentage", _parse_float(parsed.tenth_grade_percentage))
-    _set_if_blank(student, "twelfth_grade_percentage", _parse_float(parsed.twelfth_grade_percentage))
-    _set_if_blank(student, "btech_cgpa", _parse_float(parsed.btech_cgpa))
+        tenth_entry = _education_entry_from_score("10th", parsed.tenth_grade_percentage)
+        if tenth_entry:
+            education_entries.append(tenth_entry)
+
+        twelfth_entry = _education_entry_from_score("12th", parsed.twelfth_grade_percentage)
+        if twelfth_entry:
+            education_entries.append(twelfth_entry)
+
+        if education_entries:
+            student.education = education_entries
 
     _set_if_blank(student, "technical_skills", _join_list(parsed.technical_skills) or None)
     _set_if_blank(student, "soft_skills", _join_list(parsed.soft_skills) or None)

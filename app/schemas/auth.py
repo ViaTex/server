@@ -9,18 +9,11 @@ class StudentRegisterRequest(BaseModel):
     password: str
     phone: Optional[str] = None
     institution: Optional[str] = None
-    degree: Optional[str] = None
-    branch: Optional[str] = None
-    graduation_year: Optional[int] = None
-    major: Optional[str] = None
     dob: Optional[date] = None
     gender: Optional[Gender] = None
     country: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
-    tenth_grade_percentage: Optional[float] = None
-    twelfth_grade_percentage: Optional[float] = None
-    btech_cgpa: Optional[float] = None
     technical_skills: Optional[str] = None
     soft_skills: Optional[str] = None
     certifications: Optional[str] = None

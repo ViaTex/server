@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_student
-from app.schemas.student import StudentProfileUpdate, StudentProfileResponse
+from app.schemas.student import StudentProfileUpdate, StudentProfileResponse, StudentEducation
 from app.models.user import Student
 
 router = APIRouter()
@@ -21,6 +21,19 @@ STUDENT_LAST_JOB_KEY_PREFIX = "student_last_resume_job:"
 
 def _get_redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+def _normalize_education(entries):
+    normalized = []
+    if not entries:
+        return normalized
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("id"):
+            entry["id"] = str(uuid.uuid4())
+        normalized.append(entry)
+    return normalized
 
 # Setup cloudinary configuration
 try:
@@ -170,9 +183,87 @@ async def update_student_profile(
         raise HTTPException(status_code=404, detail="Student profile not found")
     
     update_data = profile_data.model_dump(exclude_unset=True)
+    if "education" in update_data:
+        update_data["education"] = _normalize_education(update_data.get("education"))
     for key, value in update_data.items():
         setattr(student, key, value)
     
     db.commit()
     db.refresh(student)
     return student
+
+
+@router.get("/education", response_model=list[StudentEducation])
+async def get_education(
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    return student.education or []
+
+
+@router.post("/education", response_model=StudentEducation, status_code=status.HTTP_201_CREATED)
+async def add_education(
+    education_entry: StudentEducation,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    entry = education_entry.model_dump()
+    entry["id"] = str(uuid.uuid4())
+    entries = list(student.education or [])
+    entries.append(entry)
+    student.education = entries
+    db.commit()
+    db.refresh(student)
+    return entry
+
+
+@router.patch("/education/{education_id}", response_model=StudentEducation)
+async def update_education(
+    education_id: str,
+    education_entry: StudentEducation,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    entries = list(student.education or [])
+    idx = next((i for i, e in enumerate(entries) if str(e.get("id")) == education_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Education entry not found")
+
+    updated = education_entry.model_dump()
+    updated["id"] = education_id
+    entries[idx] = updated
+    student.education = entries
+    db.commit()
+    db.refresh(student)
+    return updated
+
+
+@router.delete("/education/{education_id}")
+async def delete_education(
+    education_id: str,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    entries = list(student.education or [])
+    next_entries = [e for e in entries if str(e.get("id")) != education_id]
+    if len(next_entries) == len(entries):
+        raise HTTPException(status_code=404, detail="Education entry not found")
+
+    student.education = next_entries
+    db.commit()
+    return {"message": "Education entry deleted"}
