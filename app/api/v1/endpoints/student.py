@@ -1,16 +1,21 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status, BackgroundTasks
 import cloudinary
 import cloudinary.uploader
 import os
 import json
 import uuid
 import redis
+from types import SimpleNamespace
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_student
 from app.schemas.student import StudentProfileUpdate, StudentProfileResponse, StudentEducation
 from app.models.user import Student
+from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
+from app.ai.embedding.validator import has_meaningful_change
+from app.ai.utils.logger import ai_error, ai_log
+from app.ai.workers.embedding_worker import enqueue_student_embedding
 
 router = APIRouter()
 
@@ -172,6 +177,7 @@ async def get_student_profile(
 @router.patch("/profile", response_model=StudentProfileResponse)
 async def update_student_profile(
     profile_data: StudentProfileUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_student),
     db: Session = Depends(get_db)
 ):
@@ -181,6 +187,10 @@ async def update_student_profile(
     student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student profile not found")
+
+    old_snapshot = SimpleNamespace(
+        **{field: getattr(student, field, "") for field in EMBEDDING_FIELDS}
+    )
     
     update_data = profile_data.model_dump(exclude_unset=True)
     if "education" in update_data:
@@ -190,6 +200,17 @@ async def update_student_profile(
     
     db.commit()
     db.refresh(student)
+
+    try:
+        ai_log("Checking for meaningful changes...")
+        if has_meaningful_change(old_snapshot, update_data):
+            ai_log("Meaningful change detected...")
+            enqueue_student_embedding(background_tasks, str(student.id))
+        else:
+            ai_log("No meaningful change -> Skipping embedding")
+    except Exception as exc:
+        ai_error(f"Embedding failed: {exc}")
+
     return student
 
 

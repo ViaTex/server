@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Date, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Date, Enum, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import enum
 import uuid
@@ -75,6 +76,9 @@ class Student(BaseUser):
     github_profile = Column(String(500), nullable=True)
     personal_website = Column(String(500), nullable=True)
     resume_url = Column(String(1000), nullable=True)
+
+    profile_vector = Column(Vector(384), nullable=True)
+    current_des_score = Column(Numeric(3, 2), nullable=False, server_default="0.0")
     
     college_id = Column(String(255), nullable=True)
 
