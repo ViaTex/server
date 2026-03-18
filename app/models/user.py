@@ -84,6 +84,7 @@ class Student(BaseUser):
     skill_profile = Column(JSONB, nullable=True)
     
     college_id = Column(String(255), nullable=True)
+    exam_sessions = relationship("ExamSession", back_populates="student", cascade="all, delete-orphan")
 
 
 class Corporate(BaseUser):
