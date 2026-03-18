@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Literal, Any
 from datetime import date
 from app.models.user import Gender
@@ -102,23 +102,73 @@ class CustomAchievement(BaseModel):
                     out.append(s)
         return out
 
+EducationLevel = Literal["UG", "PG", "Diploma", "12th", "10th", "Other"]
+
+
+class StudentEducation(BaseModel):
+    id: Optional[str] = None
+    level: EducationLevel
+    custom_level: Optional[str] = None
+    institution: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    score: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator(
+        "custom_level",
+        "institution",
+        "start_date",
+        "end_date",
+        "score",
+        "description",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_to_none(cls, v: Any):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def normalize_level(cls, v: Any):
+        if isinstance(v, str):
+            s = v.strip().lower().replace(" ", "")
+            if s in ("ug", "undergraduate", "btech", "b.tech", "bachelor"):
+                return "UG"
+            if s in ("pg", "postgraduate", "mtech", "m.tech", "master"):
+                return "PG"
+            if s in ("diploma",):
+                return "Diploma"
+            if s in ("12th", "12", "xii"):
+                return "12th"
+            if s in ("10th", "10", "x"):
+                return "10th"
+            if s in ("other",):
+                return "Other"
+        return v
+
+    @model_validator(mode="after")
+    def validate_required_fields(self):
+        if not self.institution:
+            raise ValueError("Institution is required")
+        if self.level == "Other" and not self.custom_level:
+            raise ValueError("custom_level is required when level is Other")
+        return self
+
 class StudentProfileBase(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
     bio: Optional[str] = None
-    institution: Optional[str] = None
-    degree: Optional[str] = None
-    branch: Optional[str] = None
-    graduation_year: Optional[int] = None
-    major: Optional[str] = None
     dob: Optional[date] = None
     gender: Optional[Gender] = None
     country: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
-    tenth_grade_percentage: Optional[float] = None
-    twelfth_grade_percentage: Optional[float] = None
-    btech_cgpa: Optional[float] = None
     technical_skills: Optional[str] = None
     soft_skills: Optional[str] = None
     certifications: Optional[str] = None
@@ -134,6 +184,7 @@ class StudentProfileBase(BaseModel):
     resume_url: Optional[str] = None
 
     # New structured profile sections
+    education: Optional[List[StudentEducation]] = None
     projects: Optional[List[StudentProject]] = None
     custom_achievements: Optional[List[CustomAchievement]] = None
 

@@ -73,13 +73,28 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
+            education_entries = []
+            if request.institution:
+                education_entries.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "level": "Other",
+                        "custom_level": "Not specified",
+                        "institution": request.institution,
+                        "start_date": "",
+                        "end_date": "",
+                        "score": "",
+                        "description": "",
+                    }
+                )
+
             student = Student(
                 id=uuid.uuid4(),
                 email=request.email,
                 password_hash=SecurityManager.get_password_hash(request.password),
                 name=request.name,
                 phone=request.phone,
-                institution=request.institution
+                education=education_entries
             )
             self.db.add(student)
             self.db.commit()

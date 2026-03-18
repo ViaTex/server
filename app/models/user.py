@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, Float, ForeignKey, Date, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Date, Enum, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import enum
 import uuid
@@ -46,11 +47,6 @@ class Student(BaseUser):
     __tablename__ = "students"
     
     bio = Column(Text, nullable=True)
-    institution = Column(String(255), nullable=True)
-    degree = Column(String(100), nullable=True)
-    branch = Column(String(100), nullable=True)
-    graduation_year = Column(Integer, nullable=True)
-    major = Column(String(100), nullable=True)
     
     dob = Column(Date, nullable=True)
     gender = Column(Enum(Gender), nullable=True)
@@ -58,9 +54,8 @@ class Student(BaseUser):
     state = Column(String(100), nullable=True)
     city = Column(String(100), nullable=True)
     
-    tenth_grade_percentage = Column(Float, nullable=True)
-    twelfth_grade_percentage = Column(Float, nullable=True)
-    btech_cgpa = Column(Float, nullable=True)
+    # Education history (JSON-based, dynamic)
+    education = Column(JSONB, nullable=False, default=list)
     
     technical_skills = Column(Text, nullable=True)
     soft_skills = Column(Text, nullable=True)
@@ -81,6 +76,10 @@ class Student(BaseUser):
     github_profile = Column(String(500), nullable=True)
     personal_website = Column(String(500), nullable=True)
     resume_url = Column(String(1000), nullable=True)
+
+    profile_vector = Column(Vector(384), nullable=True)
+    current_des_score = Column(Numeric(3, 2), nullable=False, server_default="0.0")
+    skill_profile = Column(JSONB, nullable=True)
     
     college_id = Column(String(255), nullable=True)
 

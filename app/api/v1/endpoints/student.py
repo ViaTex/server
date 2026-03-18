@@ -1,16 +1,22 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status, BackgroundTasks
 import cloudinary
 import cloudinary.uploader
 import os
 import json
 import uuid
 import redis
+from types import SimpleNamespace
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_student
-from app.schemas.student import StudentProfileUpdate, StudentProfileResponse
+from app.schemas.student import StudentProfileUpdate, StudentProfileResponse, StudentEducation
 from app.models.user import Student
+from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
+from app.ai.embedding.validator import has_meaningful_change
+from app.ai.utils.logger import ai_error, ai_log
+from app.ai.workers.embedding_worker import enqueue_student_embedding
+from app.ai.workers.skill_profile_worker import enqueue_student_skill_profile_update
 
 router = APIRouter()
 
@@ -21,6 +27,19 @@ STUDENT_LAST_JOB_KEY_PREFIX = "student_last_resume_job:"
 
 def _get_redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+def _normalize_education(entries):
+    normalized = []
+    if not entries:
+        return normalized
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("id"):
+            entry["id"] = str(uuid.uuid4())
+        normalized.append(entry)
+    return normalized
 
 # Setup cloudinary configuration
 try:
@@ -159,6 +178,7 @@ async def get_student_profile(
 @router.patch("/profile", response_model=StudentProfileResponse)
 async def update_student_profile(
     profile_data: StudentProfileUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_student),
     db: Session = Depends(get_db)
 ):
@@ -168,11 +188,105 @@ async def update_student_profile(
     student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student profile not found")
+
+    old_snapshot = SimpleNamespace(
+        **{field: getattr(student, field, "") for field in EMBEDDING_FIELDS}
+    )
     
     update_data = profile_data.model_dump(exclude_unset=True)
+    if "education" in update_data:
+        update_data["education"] = _normalize_education(update_data.get("education"))
     for key, value in update_data.items():
         setattr(student, key, value)
     
     db.commit()
     db.refresh(student)
+
+    try:
+        ai_log("Checking for meaningful changes...")
+        if has_meaningful_change(old_snapshot, update_data):
+            ai_log("Meaningful change detected...")
+            enqueue_student_embedding(background_tasks, str(student.id))
+            enqueue_student_skill_profile_update(background_tasks, str(student.id))
+        else:
+            ai_log("No meaningful change -> Skipping embedding")
+    except Exception as exc:
+        ai_error(f"Embedding failed: {exc}")
+
     return student
+
+
+@router.get("/education", response_model=list[StudentEducation])
+async def get_education(
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    return student.education or []
+
+
+@router.post("/education", response_model=StudentEducation, status_code=status.HTTP_201_CREATED)
+async def add_education(
+    education_entry: StudentEducation,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    entry = education_entry.model_dump()
+    entry["id"] = str(uuid.uuid4())
+    entries = list(student.education or [])
+    entries.append(entry)
+    student.education = entries
+    db.commit()
+    db.refresh(student)
+    return entry
+
+
+@router.patch("/education/{education_id}", response_model=StudentEducation)
+async def update_education(
+    education_id: str,
+    education_entry: StudentEducation,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    entries = list(student.education or [])
+    idx = next((i for i, e in enumerate(entries) if str(e.get("id")) == education_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Education entry not found")
+
+    updated = education_entry.model_dump()
+    updated["id"] = education_id
+    entries[idx] = updated
+    student.education = entries
+    db.commit()
+    db.refresh(student)
+    return updated
+
+
+@router.delete("/education/{education_id}")
+async def delete_education(
+    education_id: str,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    entries = list(student.education or [])
+    next_entries = [e for e in entries if str(e.get("id")) != education_id]
+    if len(next_entries) == len(entries):
+        raise HTTPException(status_code=404, detail="Education entry not found")
+
+    student.education = next_entries
+    db.commit()
+    return {"message": "Education entry deleted"}
