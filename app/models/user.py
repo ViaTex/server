@@ -79,6 +79,7 @@ class Student(BaseUser):
 
     profile_vector = Column(Vector(384), nullable=True)
     current_des_score = Column(Numeric(3, 2), nullable=False, server_default="0.0")
+    skill_profile = Column(JSONB, nullable=True)
     
     college_id = Column(String(255), nullable=True)
 

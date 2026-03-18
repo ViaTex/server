@@ -16,6 +16,7 @@ from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
 from app.ai.embedding.validator import has_meaningful_change
 from app.ai.utils.logger import ai_error, ai_log
 from app.ai.workers.embedding_worker import enqueue_student_embedding
+from app.ai.workers.skill_profile_worker import enqueue_student_skill_profile_update
 
 router = APIRouter()
 
@@ -206,6 +207,7 @@ async def update_student_profile(
         if has_meaningful_change(old_snapshot, update_data):
             ai_log("Meaningful change detected...")
             enqueue_student_embedding(background_tasks, str(student.id))
+            enqueue_student_skill_profile_update(background_tasks, str(student.id))
         else:
             ai_log("No meaningful change -> Skipping embedding")
     except Exception as exc:
