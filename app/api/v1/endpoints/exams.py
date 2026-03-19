@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -10,6 +10,7 @@ from app.core.security import get_current_student
 from app.models.user import Student
 from app.services.cloudinary_service import CloudinaryService
 from app.services.exam_session_service import create_intro_exam_session
+from app.ai.services.section_a_intro_service import process_section_a_intro_ai
 
 router = APIRouter()
 
@@ -37,6 +38,7 @@ def _is_supported_media(upload: UploadFile) -> bool:
 
 @router.post("/section-intro", status_code=status.HTTP_201_CREATED)
 async def create_section_intro_session(
+    background_tasks: BackgroundTasks,
     student_id: str = Form(...),
     media_file: UploadFile = File(...),
     exam_level: str = Form("section_1"),
@@ -77,6 +79,12 @@ async def create_section_intro_session(
         student_id=student_uuid,
         exam_level=exam_level,
         video_url=video_url,
+    )
+
+    background_tasks.add_task(
+        process_section_a_intro_ai,
+        str(exam_session.id),
+        video_url,
     )
 
     return {

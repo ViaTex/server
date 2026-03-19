@@ -117,3 +117,33 @@ def create_intro_exam_session(
     db.commit()
     db.refresh(exam_session)
     return exam_session
+
+
+def update_section_a_intro_ai_analysis(
+    db: Session,
+    *,
+    exam_session_id: UUID,
+    transcript: str,
+    ai_analysis: dict[str, Any],
+) -> ExamSession:
+    exam_session = db.query(ExamSession).filter(ExamSession.id == exam_session_id).first()
+    if not exam_session:
+        raise ValueError("Exam session not found")
+
+    section_payload = {
+        "transcript": transcript,
+        "ai_analysis": {
+            "score": ai_analysis.get("score"),
+            "feedback": ai_analysis.get("feedback"),
+        },
+    }
+
+    exam_session.exam_json = merge_exam_section(
+        exam_session.exam_json,
+        "section_a_intro",
+        section_payload,
+    )
+    db.add(exam_session)
+    db.commit()
+    db.refresh(exam_session)
+    return exam_session
