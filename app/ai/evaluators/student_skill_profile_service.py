@@ -1,4 +1,4 @@
-from app.ai.services.profile_history_service import process_student_profile_history
+from app.ai.evaluators.profile_history_service import process_student_profile_history
 
 
 def process_student_skill_profile(student_id, db):

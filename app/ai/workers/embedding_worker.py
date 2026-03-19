@@ -1,6 +1,6 @@
 from fastapi import BackgroundTasks
 
-from app.ai.services.student_ai_service import process_student_embedding
+from app.ai.evaluators.student_ai_service import process_student_embedding
 from app.core.database import SessionLocal
 
 

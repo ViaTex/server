@@ -13,7 +13,7 @@ from app.core.security import get_current_student
 from app.schemas.student import StudentProfileUpdate, StudentProfileResponse, StudentEducation
 from app.models.user import Student
 from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
-from app.ai.embedding.validator import has_meaningful_change
+from app.ai.embeddings.validator import has_meaningful_change
 from app.ai.utils.logger import ai_error, ai_log
 from app.ai.workers.profile_history_worker import enqueue_student_profile_history_update
 

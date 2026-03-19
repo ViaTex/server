@@ -1,6 +1,6 @@
 from fastapi import BackgroundTasks
 
-from app.ai.services.profile_history_service import process_student_profile_history
+from app.ai.evaluators.profile_history_service import process_student_profile_history
 from app.core.database import SessionLocal
 
 

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.ai.embedding.validator import has_meaningful_change
+from app.ai.embeddings.validator import has_meaningful_change
 
 
 def test_email_only_update_does_not_trigger_embedding():

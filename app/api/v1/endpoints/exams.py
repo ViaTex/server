@@ -10,7 +10,7 @@ from app.core.security import get_current_student
 from app.models.user import Student
 from app.services.cloudinary_service import CloudinaryService
 from app.services.exam_session_service import create_intro_exam_session
-from app.ai.services.section_a_intro_service import process_section_a_intro_ai
+from app.ai.evaluators.section_a_intro_service import process_section_a_intro_ai
 
 router = APIRouter()
 

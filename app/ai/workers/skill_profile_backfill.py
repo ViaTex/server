@@ -1,5 +1,5 @@
 from app.ai.repositories.student_skill_profile_repo import list_students_for_backfill
-from app.ai.services.student_skill_profile_service import process_student_skill_profile
+from app.ai.evaluators.student_skill_profile_service import process_student_skill_profile
 from app.ai.utils.logger import ai_error, ai_log
 from app.core.database import SessionLocal
 

@@ -1,7 +1,7 @@
 import json
 import uuid
 
-from app.ai.embedding.generator import generate_embedding
+from app.ai.embeddings.generator import generate_embedding
 from app.ai.profile_history.snapshot import build_profile_snapshot, snapshot_to_embedding_text
 from app.ai.repositories.user_profile_history_repo import (
     get_latest_profile_history,

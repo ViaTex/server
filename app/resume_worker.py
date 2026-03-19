@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
-from app.ai.embedding.validator import has_meaningful_change
-from app.ai.services.profile_history_service import process_student_profile_history
+from app.ai.embeddings.validator import has_meaningful_change
+from app.ai.evaluators.profile_history_service import process_student_profile_history
 from app.models.user import Gender, Student
 from app.models.resume_embedding import ResumeEmbedding
 from ai.embedding_generator import EmbeddingGenerator, EmbeddingInput
