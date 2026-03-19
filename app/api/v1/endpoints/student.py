@@ -15,8 +15,7 @@ from app.models.user import Student
 from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
 from app.ai.embedding.validator import has_meaningful_change
 from app.ai.utils.logger import ai_error, ai_log
-from app.ai.workers.embedding_worker import enqueue_student_embedding
-from app.ai.workers.skill_profile_worker import enqueue_student_skill_profile_update
+from app.ai.workers.profile_history_worker import enqueue_student_profile_history_update
 
 router = APIRouter()
 
@@ -206,10 +205,13 @@ async def update_student_profile(
         ai_log("Checking for meaningful changes...")
         if has_meaningful_change(old_snapshot, update_data):
             ai_log("Meaningful change detected...")
-            enqueue_student_embedding(background_tasks, str(student.id))
-            enqueue_student_skill_profile_update(background_tasks, str(student.id))
+            enqueue_student_profile_history_update(
+                background_tasks,
+                str(student.id),
+                change_type="profile_update",
+            )
         else:
-            ai_log("No meaningful change -> Skipping embedding")
+            ai_log("No meaningful change -> Skipping profile history update")
     except Exception as exc:
         ai_error(f"Embedding failed: {exc}")
 
@@ -230,6 +232,7 @@ async def get_education(
 @router.post("/education", response_model=StudentEducation, status_code=status.HTTP_201_CREATED)
 async def add_education(
     education_entry: StudentEducation,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
@@ -244,6 +247,11 @@ async def add_education(
     student.education = entries
     db.commit()
     db.refresh(student)
+    enqueue_student_profile_history_update(
+        background_tasks,
+        str(student.id),
+        change_type="education_update",
+    )
     return entry
 
 
@@ -251,6 +259,7 @@ async def add_education(
 async def update_education(
     education_id: str,
     education_entry: StudentEducation,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
@@ -269,12 +278,18 @@ async def update_education(
     student.education = entries
     db.commit()
     db.refresh(student)
+    enqueue_student_profile_history_update(
+        background_tasks,
+        str(student.id),
+        change_type="education_update",
+    )
     return updated
 
 
 @router.delete("/education/{education_id}")
 async def delete_education(
     education_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
@@ -289,4 +304,9 @@ async def delete_education(
 
     student.education = next_entries
     db.commit()
+    enqueue_student_profile_history_update(
+        background_tasks,
+        str(student.id),
+        change_type="education_update",
+    )
     return {"message": "Education entry deleted"}

@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from datetime import date
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import httpx
@@ -13,6 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
+from app.ai.embedding.validator import has_meaningful_change
+from app.ai.services.profile_history_service import process_student_profile_history
 from app.models.user import Gender, Student
 from app.models.resume_embedding import ResumeEmbedding
 from ai.embedding_generator import EmbeddingGenerator, EmbeddingInput
@@ -317,6 +321,10 @@ async def _process_job(db: Session, payload: dict) -> None:
     if not student:
         raise ValueError("Student not found")
 
+    old_snapshot = SimpleNamespace(
+        **{field: getattr(student, field, "") for field in EMBEDDING_FIELDS}
+    )
+
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.get(resume_url)
         resp.raise_for_status()
@@ -379,6 +387,14 @@ async def _process_job(db: Session, payload: dict) -> None:
     db.add(student)
     db.commit()
     db.refresh(student)
+
+    tracked_values = {field: getattr(student, field, None) for field in EMBEDDING_FIELDS}
+    if has_meaningful_change(old_snapshot, tracked_values):
+        process_student_profile_history(
+            str(student.id),
+            db,
+            change_type="resume_parse",
+        )
 
     # Embeddings: replace existing sections for this student.
     embedding_inputs = _build_embedding_inputs(student)

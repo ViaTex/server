@@ -3,6 +3,7 @@ EMBEDDING_FIELDS = [
     "soft_skills",
     "certifications",
     "preferred_industry",
+    "job_roles_of_interest",
     "projects",
     "internship_experience",
     "bio",

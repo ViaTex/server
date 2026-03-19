@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy import event
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import enum
 import uuid
@@ -78,13 +77,17 @@ class Student(BaseUser):
     personal_website = Column(String(500), nullable=True)
     resume_url = Column(String(1000), nullable=True)
 
-    profile_vector = Column(Vector(384), nullable=True)
     current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
     badge = Column(String(20), nullable=True)
-    skill_profile = Column(JSONB, nullable=True)
     
     college_id = Column(String(255), nullable=True)
     exam_sessions = relationship("ExamSession", back_populates="student", cascade="all, delete-orphan")
+    profile_history_entries = relationship(
+        "UserProfileHistory",
+        back_populates="student",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class Corporate(BaseUser):
