@@ -5,7 +5,7 @@ EMBEDDING_FIELDS = [
     "preferred_industry",
     "job_roles_of_interest",
     "projects",
-    "internship_experience",
+    "experience",
     "bio",
     "extracurricular_activities",
     "custom_achievements",

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import date
 from app.models.user import Gender
 
@@ -22,7 +22,7 @@ class StudentRegisterRequest(BaseModel):
     location_preferences: Optional[str] = None
     language_proficiency: Optional[str] = None
     extracurricular_activities: Optional[str] = None
-    internship_experience: Optional[str] = None
+    experience: Optional[List[dict]] = None
     linkedin_profile: Optional[str] = None
     github_profile: Optional[str] = None
     personal_website: Optional[str] = None

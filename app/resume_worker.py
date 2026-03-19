@@ -261,6 +261,38 @@ def _education_entry_from_score(level: str, score: Any) -> Optional[dict]:
 
 
 def _build_embedding_inputs(student: Student) -> list[EmbeddingInput]:
+    def _experience_entries_to_text(entries) -> str:
+        if not isinstance(entries, list):
+            return ""
+        parts: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            company = (entry.get("company_name") or "").strip()
+            role = (entry.get("role") or "").strip()
+            skills = entry.get("skills")
+            skills_str = ", ".join([s.strip() for s in skills if isinstance(s, str) and s.strip()]) if isinstance(skills, list) else ""
+            major_project = (entry.get("major_project") or "").strip()
+            start_date = (entry.get("start_date") or "").strip()
+            end_date = (entry.get("end_date") or "").strip()
+            work_mode = (entry.get("work_mode") or "").strip()
+            exp_type = (entry.get("experience_type") or "").strip()
+            block = "\n".join(
+                [
+                    f"Company: {company}" if company else "",
+                    f"Role: {role}" if role else "",
+                    f"Skills: {skills_str}" if skills_str else "",
+                    f"Major Project: {major_project}" if major_project else "",
+                    f"Start Date: {start_date}" if start_date else "",
+                    f"End Date: {end_date}" if end_date else "",
+                    f"Work Mode: {work_mode}" if work_mode else "",
+                    f"Type: {exp_type}" if exp_type else "",
+                ]
+            ).strip()
+            if block:
+                parts.append(block)
+        return "\n\n".join(parts).strip()
+
     skills_text = "\n".join(
         [
             f"Technical Skills: {student.technical_skills or ''}",
@@ -289,7 +321,7 @@ def _build_embedding_inputs(student: Student) -> list[EmbeddingInput]:
 
     experience_text = "\n".join(
         [
-            f"Internship Experience: {student.internship_experience or ''}",
+            f"Experience: {_experience_entries_to_text(getattr(student, 'experience', []))}",
             f"Extracurricular Activities: {student.extracurricular_activities or ''}",
         ]
     ).strip()
@@ -370,7 +402,6 @@ async def _process_job(db: Session, payload: dict) -> None:
     _set_if_blank(student, "language_proficiency", _join_list(parsed.language_proficiency) or None)
 
     _set_if_blank(student, "extracurricular_activities", _join_list(parsed.extracurricular_activities) or None)
-    _set_if_blank(student, "internship_experience", _join_list(parsed.internship_experience) or None)
 
     _set_if_blank(student, "linkedin_profile", parsed.linkedin_profile or None)
     _set_if_blank(student, "github_profile", parsed.github_profile or None)

@@ -11,7 +11,7 @@ TRACKED_PROFILE_FIELDS = [
     "preferred_industry",
     "job_roles_of_interest",
     "extracurricular_activities",
-    "internship_experience",
+    "experience",
     "bio",
     "projects",
     "custom_achievements",
@@ -59,7 +59,7 @@ def build_profile_snapshot(student) -> dict:
         "extracurricular_activity": _to_list(
             getattr(student, "extracurricular_activities", None)
         ),
-        "internship_experience": _to_list(getattr(student, "internship_experience", None)),
+        "experience": _to_list_of_dicts(getattr(student, "experience", None)),
         "bio": _to_text(getattr(student, "bio", None)),
         "projects": _to_list_of_dicts(getattr(student, "projects", None)),
         "custom_achievement": _to_list_of_dicts(

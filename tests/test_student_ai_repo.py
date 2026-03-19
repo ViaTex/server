@@ -25,7 +25,7 @@ class DummyStudent:
     preferred_industry = "Software"
     job_roles_of_interest = "Backend Developer"
     extracurricular_activities = "Hackathons"
-    internship_experience = "Summer internship"
+    experience = [{"company_name": "Acme", "role": "Intern"}]
     bio = "Student bio"
     projects = []
     custom_achievements = []

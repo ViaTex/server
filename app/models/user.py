@@ -66,7 +66,7 @@ class Student(BaseUser):
     language_proficiency = Column(Text, nullable=True)
     extracurricular_activities = Column(Text, nullable=True)
     
-    internship_experience = Column(Text, nullable=True)
+    experience = Column(JSONB, nullable=False, default=list)
 
     # Structured sections (stored inside the students table for now)
     projects = Column(JSONB, nullable=False, default=list)
