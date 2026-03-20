@@ -149,3 +149,44 @@ def analyze_transcript(transcript: str) -> dict[str, Any]:
             "gaps": gaps,
         },
     }
+
+
+def generate_chat_completion(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.4,
+    max_tokens: int = 300,
+) -> str:
+    _ensure_groq_config()
+
+    headers = {
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": settings.GROQ_ANALYSIS_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    with httpx.Client(timeout=120) as client:
+        response = client.post(
+            f"{GROQ_API_BASE}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+    raw_text = ""
+    try:
+        raw_text = result["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raw_text = ""
+
+    return str(raw_text or "").strip()

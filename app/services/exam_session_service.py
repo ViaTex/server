@@ -1,149 +1,137 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from typing import Any
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.exam_session import ExamSession
+from app.models.exam_response import ExamResponse
 
 
-def _exam_json_template() -> dict[str, Any]:
-    return {
-        "metadata": {
-            "exam_domain": None,
-            "difficulty_level": None,
-        },
-        "assistance_metrics": {
-            "total_hints_count": 0,
-            "hint_history": [],
-        },
-        "sections": {
-            "section_a_intro": {
-                "video_url": None,
-                "transcript": None,
-                "ai_analysis": {
-                    "feedback": None,
-                    "score": None,
-                },
-                "mentor_analysis": {
-                    "feedback": None,
-                    "score": None,
-                },
-                "final_section_score": None,
-            }
-        },
-    }
-
-
-def merge_exam_section(
-    current_exam_json: dict[str, Any] | None,
-    section_key: str,
-    section_payload: dict[str, Any],
-) -> dict[str, Any]:
-    merged = _exam_json_template()
-
-    if isinstance(current_exam_json, dict):
-        merged = deepcopy(current_exam_json)
-
-    merged.setdefault("metadata", {"exam_domain": None, "difficulty_level": None})
-    merged.setdefault("assistance_metrics", {"total_hints_count": 0, "hint_history": []})
-    merged.setdefault("sections", {})
-
-    sections = merged.get("sections")
-    if not isinstance(sections, dict):
-        sections = {}
-        merged["sections"] = sections
-
-    existing = sections.get(section_key)
-    if isinstance(existing, dict):
-        next_section = deepcopy(existing)
-        next_section.update(section_payload)
-        sections[section_key] = next_section
-    else:
-        sections[section_key] = section_payload
-
-    return merged
-
-
-def _next_attempt_number(db: Session, student_id: UUID, exam_level: str) -> int:
-    current_max = (
-        db.query(func.max(ExamSession.attempt_number))
+def _failed_attempts(db: Session, student_id: UUID, exam_level: str) -> int:
+    return (
+        db.query(ExamSession)
         .filter(
             ExamSession.student_id == student_id,
             ExamSession.exam_level == exam_level,
+            ExamSession.attempt_number > 0,
+            ExamSession.is_passed.is_(False),
         )
-        .scalar()
+        .count()
     )
-    return int(current_max or 0) + 1
 
 
-def create_intro_exam_session(
+def create_exam_session(
     db: Session,
     *,
     student_id: UUID,
     exam_level: str,
-    video_url: str,
 ) -> ExamSession:
-    section_intro_payload = {
-        "video_url": video_url,
-        "transcript": None,
-        "ai_analysis": {
-            "feedback": None,
-            "score": None,
-        },
-        "mentor_analysis": {
-            "feedback": None,
-            "score": None,
-        },
-        "final_section_score": None,
-    }
-
-    exam_json = merge_exam_section(None, "section_a_intro", section_intro_payload)
+    attempts = _failed_attempts(db, student_id, exam_level)
+    if attempts >= 3:
+        raise ValueError("Maximum attempts reached")
 
     exam_session = ExamSession(
         student_id=student_id,
-        attempt_number=_next_attempt_number(db, student_id, exam_level),
+        attempt_number=attempts + 1,
         exam_level=exam_level,
-        exam_json=exam_json,
+        total_des_score=None,
         growth_rate=None,
         is_passed=False,
+        performance_snapshot=None,
+        current_step="SECTION_A",
         completed_at=None,
     )
-
     db.add(exam_session)
     db.commit()
     db.refresh(exam_session)
     return exam_session
 
 
-def update_section_a_intro_ai_analysis(
+def get_exam_session(db: Session, *, session_id: UUID, student_id: UUID) -> ExamSession:
+    session = (
+        db.query(ExamSession)
+        .filter(ExamSession.id == session_id, ExamSession.student_id == student_id)
+        .first()
+    )
+    if not session:
+        raise ValueError("Exam session not found")
+    return session
+
+
+def set_current_step(db: Session, *, session: ExamSession, next_step: str) -> ExamSession:
+    session.current_step = next_step
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def mark_abandoned(db: Session, *, session: ExamSession) -> ExamSession:
+    session.current_step = "ABANDONED"
+    session.total_des_score = 0
+    session.is_passed = False
+    session.completed_at = datetime.now(timezone.utc)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def finalize_exam(
     db: Session,
     *,
-    exam_session_id: UUID,
-    transcript: str,
-    ai_analysis: dict[str, Any],
+    session: ExamSession,
+    total_des_score: float,
+    growth_rate: float | None,
+    performance_snapshot: dict,
+    is_passed: bool,
 ) -> ExamSession:
-    exam_session = db.query(ExamSession).filter(ExamSession.id == exam_session_id).first()
-    if not exam_session:
-        raise ValueError("Exam session not found")
+    session.total_des_score = total_des_score
+    session.growth_rate = growth_rate
+    session.performance_snapshot = performance_snapshot
+    session.is_passed = is_passed
+    if is_passed:
+        session.attempt_number = 0
+    session.current_step = "COMPLETED"
+    session.completed_at = datetime.now(timezone.utc)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
 
-    section_payload = {
-        "transcript": transcript,
-        "ai_analysis": {
-            "score": ai_analysis.get("score"),
-            "feedback": ai_analysis.get("feedback"),
-        },
+
+def update_exam_scores_from_responses(db: Session, *, session: ExamSession) -> ExamSession:
+    responses = (
+        db.query(ExamResponse)
+        .filter(ExamResponse.session_id == session.id)
+        .all()
+    )
+
+    weights = {
+        "A_INTRO": 0.10,
+        "B_FUNDAMENTALS": 0.20,
+        "C_LOGIC": 0.30,
+        "D_DEBUG": 0.40,
+    }
+    score_map = {key: 0.0 for key in weights}
+    hints_map = {key: 0 for key in weights}
+
+    for response in responses:
+        if response.section_type in score_map:
+            score_map[response.section_type] = float(response.ai_score or 0.0)
+            hints_map[response.section_type] = int(response.hints_used or 0)
+
+    total = sum(score_map[key] * weights[key] for key in weights)
+    session.total_des_score = round(total, 2)
+    session.performance_snapshot = {
+        "scores": score_map,
+        "hints_used": hints_map,
     }
 
-    exam_session.exam_json = merge_exam_section(
-        exam_session.exam_json,
-        "section_a_intro",
-        section_payload,
-    )
-    db.add(exam_session)
+    db.add(session)
     db.commit()
-    db.refresh(exam_session)
-    return exam_session
+    db.refresh(session)
+    return session
