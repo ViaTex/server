@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from app.ai.embeddings.generator import generate_embedding
-from app.ai.evaluator import generate_chat_completion, download_media, transcribe_media
+from app.ai.evaluator import analyze_transcript, generate_chat_completion, download_media, transcribe_media
 from app.ai.utils.logger import ai_error, ai_log
 from app.core.database import SessionLocal
 from app.models.exam_response import ExamResponse
@@ -61,7 +61,14 @@ def process_section_d_debug_ai(response_id: str, video_url: str) -> None:
 
         media_bytes = download_media(video_url)
         transcript = transcribe_media(media_bytes, filename="section_d_debug.mp4")
-        analysis = score_debug_transcript(question_text=response.question_text, transcript=transcript)
+        score_analysis = score_debug_transcript(question_text=response.question_text, transcript=transcript)
+        feedback_analysis = analyze_transcript(transcript)
+        analysis = {
+            "score": score_analysis.get("score"),
+            "feedback": feedback_analysis.get("feedback", {}),
+            "expert_answer": score_analysis.get("expert_answer"),
+            "similarity": score_analysis.get("similarity"),
+        }
 
         update_response_ai_analysis(
             db,

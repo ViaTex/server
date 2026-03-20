@@ -57,6 +57,7 @@ def update_response_ai_analysis(
     if transcript is not None:
         response.transcript = transcript
     response.ai_score = ai_analysis.get("score")
+    response.ai_feedback = ai_analysis.get("feedback")
     db.add(response)
     db.commit()
     db.refresh(response)
