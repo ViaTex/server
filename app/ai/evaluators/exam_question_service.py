@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from app.ai.utils.logger import ai_error
+
 from app.ai.evaluator import generate_chat_completion
 from app.models.user import Student
 
@@ -57,6 +59,50 @@ def _extract_json_object(raw_text: str) -> dict:
         return {}
 
 
+def _parse_json_response(raw_text: str) -> dict:
+    if not raw_text:
+        return {}
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return _extract_json_object(cleaned)
+
+
+def _fallback_section_b_payload() -> tuple[dict, dict]:
+    mcqs = []
+    for idx in range(1, 16):
+        mcqs.append(
+            {
+                "id": f"q{idx}",
+                "question": f"Fundamentals check {idx}: choose the best answer.",
+                "options": ["A", "B", "C", "D"],
+                "correct_option": "A",
+            }
+        )
+
+    long_questions = []
+    for idx in range(1, 6):
+        long_questions.append(
+            {
+                "id": f"l{idx}",
+                "question": f"Explain your reasoning for concept {idx} with a real-world example.",
+            }
+        )
+
+    public_payload = {
+        "mcqs": [
+            {"id": item["id"], "question": item["question"], "options": item["options"]}
+            for item in mcqs
+        ],
+        "long_questions": long_questions,
+    }
+    answer_key = {"mcq_answers": {item["id"]: item["correct_option"] for item in mcqs}}
+    return public_payload, answer_key
+
+
 def _validate_section_b_payload(payload: dict) -> None:
     mcqs = payload.get("mcqs")
     long_questions = payload.get("long_questions")
@@ -96,8 +142,73 @@ def _validate_section_b_payload(payload: dict) -> None:
         seen_long_ids.add(long_id)
 
 
+def _normalize_mcq_item(item: dict) -> dict:
+    mcq_id = item.get("id")
+    question = item.get("question")
+    options = item.get("options")
+    correct = item.get("correct_option")
+
+    if isinstance(options, dict):
+        options = list(options.values())
+    elif isinstance(options, list) and options and isinstance(options[0], dict):
+        options = [opt.get("text") or opt.get("option") or "" for opt in options]
+
+    options = [str(opt).strip() for opt in (options or []) if str(opt).strip()]
+    options = options[:4]
+
+    if isinstance(correct, int) and 0 <= correct < len(options):
+        correct = options[correct]
+    elif isinstance(correct, str):
+        letter = correct.strip().upper()
+        if letter in ("A", "B", "C", "D"):
+            index = ["A", "B", "C", "D"].index(letter)
+            if index < len(options):
+                correct = options[index]
+
+    return {
+        "id": mcq_id,
+        "question": question,
+        "options": options,
+        "correct_option": correct,
+    }
+
+
+def _normalize_section_b_payload(payload: dict) -> dict:
+    mcqs = payload.get("mcqs") if isinstance(payload.get("mcqs"), list) else []
+    long_questions = payload.get("long_questions") if isinstance(payload.get("long_questions"), list) else []
+
+    normalized_mcqs = []
+    for item in mcqs:
+        if not isinstance(item, dict):
+            continue
+        normalized_mcqs.append(_normalize_mcq_item(item))
+
+    normalized_long = []
+    for item in long_questions:
+        if not isinstance(item, dict):
+            continue
+        normalized_long.append(
+            {
+                "id": item.get("id"),
+                "question": item.get("question"),
+            }
+        )
+
+    return {
+        "mcqs": normalized_mcqs,
+        "long_questions": normalized_long,
+    }
+
+
 def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
-    system_prompt = (
+    profile_summary = (
+        f"Student profile: name={student.name}, "
+        f"skills={student.technical_skills or ''}, "
+        f"soft_skills={student.soft_skills or ''}, "
+        f"experience={student.experience or []}."
+    )
+
+    base_system_prompt = (
         "You are an exam generator for Section B fundamentals. "
         "Return ONLY valid JSON with schema: "
         "{\"mcqs\":[{" \
@@ -105,14 +216,8 @@ def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
         "]," \
         "\"long_questions\":[{" \
         "\"id\":\"l1\",\"question\":\"...\"}]}" \
-        " with exactly 15 MCQs and 5 long questions."
-    )
-
-    profile_summary = (
-        f"Student profile: name={student.name}, "
-        f"skills={student.technical_skills or ''}, "
-        f"soft_skills={student.soft_skills or ''}, "
-        f"experience={student.experience or []}."
+        " with exactly 15 MCQs and 5 long questions. "
+        "Do not include markdown or explanations."
     )
 
     user_prompt = (
@@ -121,20 +226,33 @@ def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
         "and 5 long descriptive questions. Ensure unique ids q1-q15 and l1-l5."
     )
 
-    raw = generate_chat_completion(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=0.3,
-        max_tokens=1200,
-    )
+    last_error = ""
+    payload: dict = {}
+    for attempt in range(3):
+        system_prompt = base_system_prompt
+        if attempt == 1:
+            system_prompt += " Your response MUST be valid JSON only."
+        if attempt == 2:
+            system_prompt += " Return minified JSON with no code fences and no extra keys."
+        raw = generate_chat_completion(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.05,
+            max_tokens=1400,
+        )
+        payload = _parse_json_response(raw)
+        payload = _normalize_section_b_payload(payload)
+        try:
+            _validate_section_b_payload(payload)
+            last_error = ""
+            break
+        except ValueError as exc:
+            last_error = str(exc)
+            payload = {}
 
-    payload = {}
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        payload = _extract_json_object(raw)
-
-    _validate_section_b_payload(payload)
+    if last_error:
+        ai_error(f"Section B generation failed validation: {last_error}. Using fallback questions.")
+        return _fallback_section_b_payload()
 
     public_payload = {
         "mcqs": [
