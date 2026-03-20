@@ -6,8 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.ai.evaluators.exam_question_service import generate_section_question
-from app.ai.evaluators.exam_scoring_service import score_text_response
+from app.ai.evaluators.exam_question_service import generate_section_b_questions, generate_section_question
+from app.ai.evaluators.exam_scoring_service import score_long_response, score_text_response
 from app.ai.evaluators.section_a_intro_service import process_section_a_intro_ai
 from app.ai.evaluators.section_d_debug_service import process_section_d_debug_ai
 from app.ai.evaluator import generate_chat_completion
@@ -176,19 +176,48 @@ async def generate_section_b_question(
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
     _ensure_step(session, "SECTION_B")
 
+    existing = (
+        db.query(ExamResponse)
+        .filter(
+            ExamResponse.session_id == session.id,
+            ExamResponse.section_type == "B_FUNDAMENTALS",
+        )
+        .order_by(ExamResponse.id.desc())
+        .first()
+    )
+    if existing:
+        question_payload = None
+        try:
+            question_payload = json.loads(existing.question_text)
+        except json.JSONDecodeError:
+            question_payload = {
+                "mcqs": [],
+                "long_questions": [{"id": "l1", "question": existing.question_text}],
+            }
+
+        return {
+            "response_id": str(existing.id),
+            "question_payload": question_payload,
+            "section_type": existing.section_type,
+        }
+
     student = _load_student(db, session.student_id)
-    question = generate_section_question(section_type="B_FUNDAMENTALS", student=student)
+    try:
+        question_payload, answer_key = generate_section_b_questions(student=student)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     response = create_exam_response(
         db,
         session_id=session.id,
         section_type="B_FUNDAMENTALS",
-        question_text=question,
+        question_text=json.dumps(question_payload),
         user_response="",
+        transcript=json.dumps(answer_key),
     )
 
     return {
         "response_id": str(response.id),
-        "question_text": question,
+        "question_payload": question_payload,
         "section_type": response.section_type,
     }
 
@@ -201,9 +230,12 @@ async def submit_section_b_response(
     db: Session = Depends(get_db),
 ):
     response_id = payload.get("response_id")
-    user_response = payload.get("user_response")
-    if not response_id or user_response is None:
-        raise HTTPException(status_code=400, detail="response_id and user_response are required")
+    mcq_answers = payload.get("mcq_answers")
+    long_answers = payload.get("long_answers")
+    if not response_id or mcq_answers is None or long_answers is None:
+        raise HTTPException(status_code=400, detail="response_id, mcq_answers, and long_answers are required")
+    if not isinstance(mcq_answers, list) or not isinstance(long_answers, list):
+        raise HTTPException(status_code=400, detail="mcq_answers and long_answers must be arrays")
 
     try:
         session_uuid = UUID(session_id)
@@ -226,13 +258,54 @@ async def submit_section_b_response(
     if not response:
         raise HTTPException(status_code=404, detail="Exam response not found")
 
-    update_response_answer(db, response=response, user_response=str(user_response))
-    analysis = score_text_response(
-        section_type="B_FUNDAMENTALS",
-        question_text=response.question_text,
-        user_response=str(user_response),
-    )
-    response.ai_score = analysis.get("score")
+    try:
+        question_payload = json.loads(response.question_text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Stored Section B questions are invalid") from exc
+
+    answer_key = {}
+    if response.transcript:
+        try:
+            answer_key = json.loads(response.transcript)
+        except json.JSONDecodeError:
+            answer_key = {}
+
+    mcq_answer_map = {item.get("id"): item.get("selected_option") for item in mcq_answers if isinstance(item, dict)}
+    long_answer_map = {item.get("id"): item.get("answer") for item in long_answers if isinstance(item, dict)}
+
+    expected_mcq = answer_key.get("mcq_answers") if isinstance(answer_key.get("mcq_answers"), dict) else {}
+    expected_long = question_payload.get("long_questions") if isinstance(question_payload.get("long_questions"), list) else []
+
+    if len(expected_mcq) != 15 or len(expected_long) != 5:
+        raise HTTPException(status_code=500, detail="Section B question set is incomplete")
+
+    missing_mcq = [qid for qid in expected_mcq.keys() if not mcq_answer_map.get(qid)]
+    missing_long = [item.get("id") for item in expected_long if not long_answer_map.get(item.get("id"))]
+    if missing_mcq or missing_long:
+        raise HTTPException(status_code=400, detail="All Section B answers must be provided")
+
+    correct_count = sum(1 for qid, correct in expected_mcq.items() if mcq_answer_map.get(qid) == correct)
+    mcq_score = (correct_count / len(expected_mcq)) * 10 if expected_mcq else 1.0
+
+    long_scores = []
+    for item in expected_long:
+        long_id = item.get("id")
+        question_text = item.get("question")
+        answer_text = long_answer_map.get(long_id, "")
+        if not question_text:
+            continue
+        long_scores.append(score_long_response(question_text=question_text, user_response=answer_text))
+
+    long_avg = sum(long_scores) / len(long_scores) if long_scores else 1.0
+    final_score = round((mcq_score + long_avg) / 2, 2)
+    final_score = max(1.0, min(10.0, final_score))
+
+    payload_to_store = {
+        "mcq_answers": mcq_answers,
+        "long_answers": long_answers,
+    }
+    update_response_answer(db, response=response, user_response=json.dumps(payload_to_store))
+    response.ai_score = final_score
     if response.hints_used:
         response.ai_score = max(float(response.ai_score or 0.0) - (0.5 * response.hints_used), 0.0)
     db.add(response)

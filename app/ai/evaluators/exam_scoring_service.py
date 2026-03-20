@@ -47,3 +47,36 @@ def score_text_response(*, section_type: str, question_text: str, user_response:
             "gaps": gaps,
         },
     }
+
+
+def score_long_response(*, question_text: str, user_response: str) -> float:
+    system_prompt = (
+        "You are an exam evaluator for long-form answers. Return ONLY valid JSON with schema: "
+        "{\"score\": <number 1-10>}"
+    )
+    user_prompt = (
+        f"Question: {question_text}\n"
+        f"Student answer: {user_response}\n"
+        "Score the answer on depth, accuracy, and clarity."
+    )
+
+    raw = generate_chat_completion(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.2,
+        max_tokens=200,
+    )
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = {}
+
+    score = data.get("score")
+    try:
+        score_value = float(score)
+    except (TypeError, ValueError):
+        score_value = 5.0
+
+    score_value = max(1.0, min(10.0, score_value))
+    return round(score_value, 2)
