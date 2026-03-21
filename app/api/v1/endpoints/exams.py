@@ -331,6 +331,22 @@ async def generate_section_c_question(
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
     _ensure_step(session, "SECTION_C")
 
+    existing = (
+        db.query(ExamResponse)
+        .filter(
+            ExamResponse.session_id == session.id,
+            ExamResponse.section_type == "C_LOGIC",
+        )
+        .order_by(ExamResponse.id.desc())
+        .first()
+    )
+    if existing:
+        return {
+            "response_id": str(existing.id),
+            "question_text": existing.question_text,
+            "section_type": existing.section_type,
+        }
+
     student = _load_student(db, session.student_id)
     question = generate_section_question(section_type="C_LOGIC", student=student)
     response = create_exam_response(
@@ -412,6 +428,22 @@ async def generate_section_d_question(
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
     _ensure_step(session, "SECTION_D")
+
+    existing = (
+        db.query(ExamResponse)
+        .filter(
+            ExamResponse.session_id == session.id,
+            ExamResponse.section_type == "D_DEBUG",
+        )
+        .order_by(ExamResponse.id.desc())
+        .first()
+    )
+    if existing:
+        return {
+            "response_id": str(existing.id),
+            "question_text": existing.question_text,
+            "section_type": existing.section_type,
+        }
 
     student = _load_student(db, session.student_id)
     last_logic = (
@@ -589,3 +621,98 @@ async def request_hint(
     db.refresh(response)
 
     return {"hint": hint_text}
+
+
+@router.post("/{session_id}/responses/{response_id}/chat")
+async def exam_response_chat(
+    session_id: str,
+    response_id: str,
+    payload: dict,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    user_message = payload.get("user_message")
+    current_user_code_or_text = payload.get("current_user_code_or_text") or ""
+    if not user_message or not isinstance(user_message, str):
+        raise HTTPException(status_code=400, detail="user_message is required")
+
+    try:
+        session_uuid = UUID(session_id)
+        response_uuid = UUID(response_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id or response_id") from exc
+
+    session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
+    response = (
+        db.query(ExamResponse)
+        .filter(ExamResponse.id == response_uuid, ExamResponse.session_id == session.id)
+        .first()
+    )
+    if not response:
+        raise HTTPException(status_code=404, detail="Exam response not found")
+
+    redis_client = get_redis_client()
+    history_key = f"exam_chat_history:{session_id}:{response_id}"
+    cached = redis_client.get(history_key)
+    history = []
+    if cached:
+        try:
+            history = json.loads(cached)
+        except json.JSONDecodeError:
+            history = []
+
+    first_message = len(history) == 0
+
+    history.append({"role": "user", "content": user_message})
+
+    question_text = response.question_text or ""
+    if question_text and user_message.strip() == question_text.strip():
+        assistant_reply = (
+            "I see you are looking at the main prompt. What part of this problem is confusing you, "
+            "or how would you break this down into smaller steps?"
+        )
+    else:
+        system_prompt = (
+            "You are a strict but helpful exam proctor and Socratic tutor. "
+            f"The user is currently trying to answer this exam question: {question_text}. "
+            "CRITICAL RULE: Under NO circumstances are you allowed to give the direct answer, "
+            "write the exact code needed, or solve the problem for the user. "
+            "If the user copy-pastes the exam question directly into the chat, DO NOT answer it. "
+            "Instead, ask them: 'I see you are looking at the main prompt. What part of this problem is confusing you, "
+            "or how would you break this down into smaller steps?' "
+            "Provide short, guiding nudges. Point out syntax errors in their current code if they ask, "
+            "but make them write the fix."
+        )
+
+        history_text = "\n".join(
+            f"{item.get('role')}: {item.get('content')}" for item in history if isinstance(item, dict)
+        )
+        user_prompt = (
+            f"Question: {question_text}\n"
+            f"Current user work: {current_user_code_or_text}\n"
+            f"Chat history:\n{history_text}\n"
+            f"User message: {user_message}"
+        )
+
+        assistant_reply = generate_chat_completion(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            max_tokens=220,
+        )
+
+    if not assistant_reply:
+        assistant_reply = "I cannot respond right now. Try asking about a specific part you are stuck on."
+
+    history.append({"role": "assistant", "content": assistant_reply})
+    redis_client.setex(history_key, 14400, json.dumps(history))
+
+    if first_message:
+        response.hints_used = int(response.hints_used or 0) + 1
+        if response.ai_score is not None:
+            response.ai_score = max(float(response.ai_score) - 0.5, 0.0)
+        db.add(response)
+        db.commit()
+        db.refresh(response)
+
+    return {"reply": assistant_reply}
