@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from datetime import date
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import httpx
@@ -13,6 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.ai.constants.embedding_fields import EMBEDDING_FIELDS
+from app.ai.embeddings.validator import has_meaningful_change
+from app.ai.evaluators.profile_history_service import process_student_profile_history
 from app.models.user import Gender, Student
 from app.models.resume_embedding import ResumeEmbedding
 from ai.embedding_generator import EmbeddingGenerator, EmbeddingInput
@@ -257,6 +261,38 @@ def _education_entry_from_score(level: str, score: Any) -> Optional[dict]:
 
 
 def _build_embedding_inputs(student: Student) -> list[EmbeddingInput]:
+    def _experience_entries_to_text(entries) -> str:
+        if not isinstance(entries, list):
+            return ""
+        parts: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            company = (entry.get("company_name") or "").strip()
+            role = (entry.get("role") or "").strip()
+            skills = entry.get("skills")
+            skills_str = ", ".join([s.strip() for s in skills if isinstance(s, str) and s.strip()]) if isinstance(skills, list) else ""
+            major_project = (entry.get("major_project") or "").strip()
+            start_date = (entry.get("start_date") or "").strip()
+            end_date = (entry.get("end_date") or "").strip()
+            work_mode = (entry.get("work_mode") or "").strip()
+            exp_type = (entry.get("experience_type") or "").strip()
+            block = "\n".join(
+                [
+                    f"Company: {company}" if company else "",
+                    f"Role: {role}" if role else "",
+                    f"Skills: {skills_str}" if skills_str else "",
+                    f"Major Project: {major_project}" if major_project else "",
+                    f"Start Date: {start_date}" if start_date else "",
+                    f"End Date: {end_date}" if end_date else "",
+                    f"Work Mode: {work_mode}" if work_mode else "",
+                    f"Type: {exp_type}" if exp_type else "",
+                ]
+            ).strip()
+            if block:
+                parts.append(block)
+        return "\n\n".join(parts).strip()
+
     skills_text = "\n".join(
         [
             f"Technical Skills: {student.technical_skills or ''}",
@@ -285,7 +321,7 @@ def _build_embedding_inputs(student: Student) -> list[EmbeddingInput]:
 
     experience_text = "\n".join(
         [
-            f"Internship Experience: {student.internship_experience or ''}",
+            f"Experience: {_experience_entries_to_text(getattr(student, 'experience', []))}",
             f"Extracurricular Activities: {student.extracurricular_activities or ''}",
         ]
     ).strip()
@@ -316,6 +352,10 @@ async def _process_job(db: Session, payload: dict) -> None:
     student = db.query(Student).filter(Student.id == student_uuid).first()
     if not student:
         raise ValueError("Student not found")
+
+    old_snapshot = SimpleNamespace(
+        **{field: getattr(student, field, "") for field in EMBEDDING_FIELDS}
+    )
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.get(resume_url)
@@ -362,7 +402,6 @@ async def _process_job(db: Session, payload: dict) -> None:
     _set_if_blank(student, "language_proficiency", _join_list(parsed.language_proficiency) or None)
 
     _set_if_blank(student, "extracurricular_activities", _join_list(parsed.extracurricular_activities) or None)
-    _set_if_blank(student, "internship_experience", _join_list(parsed.internship_experience) or None)
 
     _set_if_blank(student, "linkedin_profile", parsed.linkedin_profile or None)
     _set_if_blank(student, "github_profile", parsed.github_profile or None)
@@ -379,6 +418,14 @@ async def _process_job(db: Session, payload: dict) -> None:
     db.add(student)
     db.commit()
     db.refresh(student)
+
+    tracked_values = {field: getattr(student, field, None) for field in EMBEDDING_FIELDS}
+    if has_meaningful_change(old_snapshot, tracked_values):
+        process_student_profile_history(
+            str(student.id),
+            db,
+            change_type="resume_parse",
+        )
 
     # Embeddings: replace existing sections for this student.
     embedding_inputs = _build_embedding_inputs(student)

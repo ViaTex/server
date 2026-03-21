@@ -102,6 +102,54 @@ class CustomAchievement(BaseModel):
                     out.append(s)
         return out
 
+
+WorkMode = Literal["onsite", "hybrid", "remote"]
+ExperienceType = Literal["internship", "full_time", "other"]
+
+
+class ExperienceEntry(BaseModel):
+    id: Optional[str] = None
+    company_name: Optional[str] = None
+    role: Optional[str] = None
+    skills: List[str] = Field(default_factory=list)
+    major_project: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    work_mode: WorkMode = "onsite"
+    experience_type: ExperienceType = "other"
+
+    @field_validator(
+        "company_name",
+        "role",
+        "major_project",
+        "start_date",
+        "end_date",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_to_none(cls, v: Any):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def normalize_skills(cls, v: Any):
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            return []
+        out: List[str] = []
+        for item in v:
+            if isinstance(item, str):
+                s = item.strip()
+                if s:
+                    out.append(s)
+        return out
+
 EducationLevel = Literal["UG", "PG", "Diploma", "12th", "10th", "Other"]
 
 
@@ -177,11 +225,13 @@ class StudentProfileBase(BaseModel):
     location_preferences: Optional[str] = None
     language_proficiency: Optional[str] = None
     extracurricular_activities: Optional[str] = None
-    internship_experience: Optional[str] = None
+    experience: Optional[List[ExperienceEntry]] = None
     linkedin_profile: Optional[str] = None
     github_profile: Optional[str] = None
     personal_website: Optional[str] = None
     resume_url: Optional[str] = None
+    current_des_score: Optional[float] = None
+    badge: Optional[str] = None
 
     # New structured profile sections
     education: Optional[List[StudentEducation]] = None

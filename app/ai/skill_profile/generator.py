@@ -101,15 +101,21 @@ def _extract_advanced_topics(technical_skills: Any, projects: Any) -> list[str]:
     return advanced_topics
 
 
-def _compute_experience_level(internship_experience: Any, projects: Any, advanced_topics: list[str]) -> str:
-    has_internship = bool(value_to_text(internship_experience).strip())
+def _has_experience_entries(experience: Any) -> bool:
+    if isinstance(experience, list):
+        return any(isinstance(entry, dict) and entry for entry in experience)
+    return bool(value_to_text(experience).strip())
+
+
+def _compute_experience_level(experience: Any, projects: Any, advanced_topics: list[str]) -> str:
+    has_experience = _has_experience_entries(experience)
     has_projects = False
     if isinstance(projects, list):
         has_projects = len(projects) > 0
     else:
         has_projects = bool(value_to_text(projects).strip())
 
-    if has_internship and advanced_topics:
+    if has_experience and advanced_topics:
         return "advanced"
     if has_projects:
         return "intermediate"
@@ -134,7 +140,7 @@ def generate_skill_profile(student) -> dict:
         ),
         "advanced_topics": advanced_topics,
         "experience_level": _compute_experience_level(
-            getattr(student, "internship_experience", ""),
+            getattr(student, "experience", []),
             getattr(student, "projects", []),
             advanced_topics,
         ),
