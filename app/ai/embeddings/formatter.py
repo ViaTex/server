@@ -9,7 +9,7 @@ def format_student_profile_text(student) -> str:
         "Certifications: {certifications} | "
         "Industry: {preferred_industry} | "
         "Projects: {projects} | "
-        "Internship: {internship_experience} | "
+        "Experience: {experience} | "
         "Achievements: {custom_achievements} | "
         "Education: {education} | "
         "Activities: {extracurricular_activities} | "
@@ -21,7 +21,7 @@ def format_student_profile_text(student) -> str:
         certifications=value_to_text(getattr(student, "certifications", "")),
         preferred_industry=value_to_text(getattr(student, "preferred_industry", "")),
         projects=value_to_text(getattr(student, "projects", "")),
-        internship_experience=value_to_text(getattr(student, "internship_experience", "")),
+        experience=value_to_text(getattr(student, "experience", "")),
         custom_achievements=value_to_text(getattr(student, "custom_achievements", "")),
         education=value_to_text(getattr(student, "education", "")),
         extracurricular_activities=value_to_text(

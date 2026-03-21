@@ -1,8 +1,8 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Date, Enum, Numeric
 from sqlalchemy.orm import relationship
+from sqlalchemy import event
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import enum
 import uuid
@@ -66,7 +66,7 @@ class Student(BaseUser):
     language_proficiency = Column(Text, nullable=True)
     extracurricular_activities = Column(Text, nullable=True)
     
-    internship_experience = Column(Text, nullable=True)
+    experience = Column(JSONB, nullable=False, default=list)
 
     # Structured sections (stored inside the students table for now)
     projects = Column(JSONB, nullable=False, default=list)
@@ -77,10 +77,17 @@ class Student(BaseUser):
     personal_website = Column(String(500), nullable=True)
     resume_url = Column(String(1000), nullable=True)
 
-    profile_vector = Column(Vector(384), nullable=True)
-    current_des_score = Column(Numeric(3, 2), nullable=False, server_default="0.0")
+    current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
+    badge = Column(String(20), nullable=True)
     
     college_id = Column(String(255), nullable=True)
+    exam_sessions = relationship("ExamSession", back_populates="student", cascade="all, delete-orphan")
+    profile_history_entries = relationship(
+        "UserProfileHistory",
+        back_populates="student",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class Corporate(BaseUser):
@@ -157,3 +164,28 @@ class PasswordResetOTP(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     used = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+def _badge_from_des_score(score) -> str:
+    try:
+        value = float(score or 0.0)
+    except Exception:
+        value = 0.0
+
+    if value < 3.0:
+        return "Bronze"
+    if value < 5.0:
+        return "Silver"
+    if value < 7.0:
+        return "Gold"
+    return "Diamond"
+
+
+@event.listens_for(Student, "before_insert")
+def set_badge_before_insert(_mapper, _connection, target):
+    target.badge = _badge_from_des_score(target.current_des_score)
+
+
+@event.listens_for(Student, "before_update")
+def set_badge_before_update(_mapper, _connection, target):
+    target.badge = _badge_from_des_score(target.current_des_score)

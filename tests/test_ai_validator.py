@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.ai.embedding.validator import has_meaningful_change
+from app.ai.embeddings.validator import has_meaningful_change
 
 
 def test_email_only_update_does_not_trigger_embedding():
@@ -10,7 +10,7 @@ def test_email_only_update_does_not_trigger_embedding():
         certifications="none",
         preferred_industry="software",
         projects=[{"title": "API"}],
-        internship_experience="internship",
+        experience=[{"company_name": "Acme", "role": "Intern"}],
         bio="bio",
         extracurricular_activities="sports",
         custom_achievements=[{"title": "winner"}],
@@ -29,7 +29,7 @@ def test_skills_update_triggers_embedding():
         certifications="none",
         preferred_industry="software",
         projects=[{"title": "API"}],
-        internship_experience="internship",
+        experience=[{"company_name": "Acme", "role": "Intern"}],
         bio="bio",
         extracurricular_activities="sports",
         custom_achievements=[{"title": "winner"}],
@@ -48,7 +48,7 @@ def test_same_value_update_does_not_trigger_embedding():
         certifications="none",
         preferred_industry="software",
         projects=[{"title": "API"}],
-        internship_experience="internship",
+        experience=[{"company_name": "Acme", "role": "Intern"}],
         bio="bio",
         extracurricular_activities="sports",
         custom_achievements=[{"title": "winner"}],
