@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     GROQ_TRANSCRIPTION_MODEL: str = ""
     GROQ_ANALYSIS_MODEL: str = ""
 
+    # Exam scoring
+    EXAM_PASS_MARK: float = 7.0
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:

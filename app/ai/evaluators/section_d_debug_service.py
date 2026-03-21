@@ -8,7 +8,6 @@ from app.ai.utils.logger import ai_error, ai_log
 from app.core.database import SessionLocal
 from app.models.exam_response import ExamResponse
 from app.services.exam_response_service import update_response_ai_analysis
-from app.services.exam_session_service import update_exam_scores_from_responses
 
 
 def generate_expert_answer(*, question_text: str) -> str:
@@ -76,7 +75,6 @@ def process_section_d_debug_ai(response_id: str, video_url: str) -> None:
             transcript=transcript,
             ai_analysis=analysis,
         )
-        update_exam_scores_from_responses(db, session=response.session)
         ai_log(f"Section D AI evaluation completed for response_id={response_id}")
     except Exception as exc:
         ai_error(f"Section D AI evaluation failed for response_id={response_id}: {exc}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
@@ -12,6 +13,7 @@ from app.ai.evaluators.section_a_intro_service import process_section_a_intro_ai
 from app.ai.evaluators.section_d_debug_service import process_section_d_debug_ai
 from app.ai.evaluator import generate_chat_completion
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.redis import get_redis_client
 from app.core.security import get_current_student
 from app.models.exam_response import ExamResponse
@@ -19,14 +21,15 @@ from app.models.exam_session import ExamSession
 from app.models.user import Student
 from app.services.cloudinary_service import CloudinaryService
 from app.services.exam_response_service import create_exam_response, update_response_answer
-from datetime import datetime, timezone
 
 from app.services.exam_session_service import (
     create_exam_session,
     get_exam_session,
+    finalize_exam,
     mark_abandoned,
     set_current_step,
 )
+from app.schemas.exams import MentorFeedback
 
 router = APIRouter()
 
@@ -67,6 +70,19 @@ def _load_student(db: Session, student_id: UUID) -> Student:
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     return student
+
+
+def _to_decimal(value: object, *, label: str) -> Decimal:
+    if value is None:
+        raise HTTPException(status_code=400, detail=f"Missing {label}")
+    try:
+        return Decimal(str(value))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {label}") from exc
+
+
+def _round_score(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 @router.get("/sessions/{session_id}")
@@ -525,15 +541,103 @@ async def submit_section_d_response(
         raise HTTPException(status_code=500, detail=f"Failed to upload media: {exc}") from exc
 
     update_response_answer(db, response=response, user_response=video_url)
-    session.current_step = "COMPLETED"
-    session.completed_at = datetime.now(timezone.utc)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+    set_current_step(db, session=session, next_step="PENDING_MENTOR_REVIEW")
 
     background_tasks.add_task(process_section_d_debug_ai, str(response.id), video_url)
 
     return {"message": "Section D submitted", "current_step": session.current_step}
+
+
+@router.post("/sessions/{session_id}/calculate-final-score")
+async def calculate_final_score(
+    session_id: str,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
+
+    session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
+    if session.current_step != "PENDING_MENTOR_REVIEW":
+        raise HTTPException(status_code=409, detail=f"Current step is {session.current_step}")
+
+    responses = (
+        db.query(ExamResponse)
+        .filter(ExamResponse.session_id == session.id)
+        .all()
+    )
+    response_map = {response.section_type: response for response in responses}
+
+    required_sections = ["A_INTRO", "B_FUNDAMENTALS", "C_LOGIC", "D_DEBUG"]
+    missing_sections = [section for section in required_sections if section not in response_map]
+    if missing_sections:
+        raise HTTPException(status_code=400, detail=f"Missing responses: {', '.join(missing_sections)}")
+
+    response_a = response_map["A_INTRO"]
+    response_b = response_map["B_FUNDAMENTALS"]
+    response_c = response_map["C_LOGIC"]
+    response_d = response_map["D_DEBUG"]
+
+    mentor_feedback_a = response_a.mentor_feedback
+    mentor_feedback_d = response_d.mentor_feedback
+    if mentor_feedback_a is None or mentor_feedback_d is None:
+        raise HTTPException(status_code=400, detail="Missing mentor_feedback for Section A or D")
+
+    try:
+        MentorFeedback.model_validate(mentor_feedback_a)
+        MentorFeedback.model_validate(mentor_feedback_d)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid mentor_feedback schema") from exc
+
+    ai_a = _to_decimal(response_a.ai_score, label="Section A ai_score")
+    ai_b = _to_decimal(response_b.ai_score, label="Section B ai_score")
+    ai_c = _to_decimal(response_c.ai_score, label="Section C ai_score")
+    ai_d = _to_decimal(response_d.ai_score, label="Section D ai_score")
+    mentor_a = _to_decimal(response_a.mentor_score, label="Section A mentor_score")
+    mentor_d = _to_decimal(response_d.mentor_score, label="Section D mentor_score")
+
+    section_a_score = _round_score((ai_a + mentor_a) / Decimal("2"))
+    section_b_score = _round_score(ai_b)
+    section_c_score = _round_score(ai_c)
+    section_d_score = _round_score((ai_d + mentor_d) / Decimal("2"))
+
+    total = (
+        section_a_score * Decimal("0.10")
+        + section_b_score * Decimal("0.20")
+        + section_c_score * Decimal("0.30")
+        + section_d_score * Decimal("0.40")
+    )
+    total = _round_score(total)
+
+    pass_mark = getattr(settings, "EXAM_PASS_MARK", 7.0)
+    is_passed = total >= Decimal(str(pass_mark))
+
+    performance_snapshot = {
+        "scores": {
+            "A_INTRO": float(section_a_score),
+            "B_FUNDAMENTALS": float(section_b_score),
+            "C_LOGIC": float(section_c_score),
+            "D_DEBUG": float(section_d_score),
+        }
+    }
+
+    finalize_exam(
+        db,
+        session=session,
+        total_des_score=float(total),
+        growth_rate=None,
+        performance_snapshot=performance_snapshot,
+        is_passed=bool(is_passed),
+    )
+
+    return {
+        "message": "Final score calculated",
+        "total_des_score": float(total),
+        "is_passed": bool(is_passed),
+        "current_step": session.current_step,
+    }
 
 
 @router.post("/sessions/{session_id}/abandon")
