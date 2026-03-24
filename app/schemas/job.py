@@ -79,6 +79,17 @@ class JobCreateSchema(JobCreateRequest):
 
 class JobResponse(JobCreateSchema):
     id: UUID
+    is_public: bool
+    status: str
+    views_count: int
+    applications_count: int
+    created_at: datetime
+    updated_at: Optional[datetime]
+    published_at: Optional[datetime]
+    can_apply: bool
+    is_active: bool
+    public_link_token: Optional[str]
 
     class Config:
         from_attributes = True
+

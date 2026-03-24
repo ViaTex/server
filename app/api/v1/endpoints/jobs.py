@@ -118,6 +118,9 @@ async def list_jobs(
 ):
     query = db.query(Job).order_by(Job.created_at.desc())
 
+    if current_user["user_type"] == "student":
+        query = query.filter(Job.is_public == True)
+
     if mine:
         if current_user["user_type"] not in {"corporate", "college"}:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only corporate or college can view own jobs")
@@ -133,3 +136,65 @@ async def list_jobs(
 
     jobs = query.all()
     return [_serialize_job(job) for job in jobs]
+
+
+@router.get("/{job_id}", response_model=JobResponse)
+async def get_job(
+    job_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return _serialize_job(job)
+
+@router.put("/{job_id}", response_model=JobResponse)
+async def update_job(
+    job_id: UUID,
+    payload: JobCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user["user_type"] not in {"corporate", "college"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only corporate or college can update jobs")
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        
+    try:
+        owner_id = UUID(str(current_user["user_id"]))
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+
+    if current_user["user_type"] == "corporate" and job.corporate_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to edit this job")
+    elif current_user["user_type"] == "college" and job.college_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to edit this job")
+        
+    payload_data = payload.model_dump(exclude={"job_type"})
+    for key, value in payload_data.items():
+        setattr(job, key, value)
+    
+    job.job_type = JobType(payload.job_type)
+    
+    db.commit()
+    db.refresh(job)
+    return _serialize_job(job)
+
+@router.patch("/{job_id}/approve", response_model=JobResponse)
+async def approve_job(
+    job_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("user_type") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin can approve jobs")
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    job.is_public = True
+    db.commit()
+    db.refresh(job)
+    return _serialize_job(job)
+
