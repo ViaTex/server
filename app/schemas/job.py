@@ -63,12 +63,18 @@ class JobCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_ranges(self):
-        if self.salary_min is not None and self.salary_max is not None and self.salary_min > self.salary_max:
+        salary_min, salary_max = self.salary_min, self.salary_max
+        if salary_min is not None and salary_max is not None and salary_min > salary_max:
             raise ValueError("salary_min must be less than or equal to salary_max")
-        if self.experience_min is not None and self.experience_max is not None and self.experience_min > self.experience_max:
+        
+        experience_min, experience_max = self.experience_min, self.experience_max
+        if experience_min is not None and experience_max is not None and experience_min > experience_max:
             raise ValueError("experience_min must be less than or equal to experience_max")
-        if self.min_des_score is not None and self.max_des_score is not None and self.min_des_score > self.max_des_score:
+        
+        min_des_score, max_des_score = self.min_des_score, self.max_des_score
+        if min_des_score is not None and max_des_score is not None and min_des_score > max_des_score:
             raise ValueError("min_des_score must be less than or equal to max_des_score")
+        
         return self
 
 
