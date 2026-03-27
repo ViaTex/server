@@ -62,10 +62,20 @@ class CollegeRegisterRequest(BaseModel):
     branch: Optional[str] = None
     college_id: Optional[str] = None
 
+
+class MentorRegisterRequest(BaseModel):
+    full_name: str
+    email_id: EmailStr
+    password: str
+    phone_number: Optional[str] = None
+    current_company: Optional[str] = None
+    total_experience: int = Field(..., ge=5, description="Minimum 5 years required")
+    domain_expertise: List[str] = Field(default_factory=list)
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    user_type: str = Field(..., description="Must be one of: student, corporate, college, admin")
+    user_type: str = Field(..., description="Must be one of: student, corporate, college, mentor, admin")
 
 class OTPVerifyRequest(BaseModel):
     email: EmailStr

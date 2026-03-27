@@ -14,6 +14,7 @@ class UserType(str, enum.Enum):
     STUDENT = "student"
     CORPORATE = "corporate"
     COLLEGE = "college"
+    MENTOR = "mentor"
     ADMIN = "admin"
 
 class Gender(str, enum.Enum):
@@ -26,6 +27,13 @@ class UserStatus(str, enum.Enum):
     INACTIVE = "inactive"
     SUSPENDED = "suspended"
     PENDING = "pending"
+
+
+class MentorVerificationStatus(str, enum.Enum):
+    UNVERIFIED = "Unverified"
+    PENDING = "Pending"
+    VERIFIED = "Verified"
+    REJECTED = "Rejected"
 
 class BaseUser(Base):
     __abstract__ = True
@@ -129,6 +137,42 @@ class College(BaseUser):
     courses_offered = Column(Text, nullable=True)
     branch = Column(String(255), nullable=True)
     college_id = Column(String(255), nullable=True)
+
+
+class Mentor(Base):
+    __tablename__ = "mentors"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mentor_id = Column(String(10), unique=True, nullable=False, index=True)
+    full_name = Column(String(255), nullable=False)
+    email_id = Column(String(255), unique=True, nullable=False, index=True)
+    phone_number = Column(String(20), nullable=True)
+
+    password_hash = Column(String(255), nullable=False)
+
+    is_email_verified = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_phone_verified = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    current_company = Column(String(255), nullable=True)
+    total_experience = Column(Integer, nullable=False)
+    domain_expertise = Column(JSONB, nullable=False, default=list, server_default="[]")
+
+    verification_status = Column(
+        Enum(
+            MentorVerificationStatus,
+            name="mentorverificationstatus",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=MentorVerificationStatus.UNVERIFIED,
+        server_default=MentorVerificationStatus.UNVERIFIED.value,
+    )
+
+    failed_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
 class Admin(BaseUser):

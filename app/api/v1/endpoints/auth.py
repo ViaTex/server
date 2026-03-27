@@ -5,6 +5,7 @@ from app.schemas.auth import (
     StudentRegisterRequest,
     CorporateRegisterRequest,
     CollegeRegisterRequest,
+    MentorRegisterRequest,
     LoginRequest,
     OTPVerifyRequest
 )
@@ -64,6 +65,20 @@ async def register_college(request: CollegeRegisterRequest, db: Session = Depend
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.post("/register/mentor")
+async def register_mentor(request: MentorRegisterRequest, db: Session = Depends(get_db)):
+    auth_service = AuthService(db)
+    try:
+        user = await auth_service.register_mentor(request)
+        return {
+            "message": "Mentor registered successfully",
+            "data": {"id": str(user.id), "mentor_id": user.mentor_id, "email_id": user.email_id},
+            "status": "success"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @router.post("/login")
 async def login(request: LoginRequest, db: Session = Depends(get_db)):
     auth_service = AuthService(db)
@@ -71,6 +86,10 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         user, access_token, refresh_token = await auth_service.login(
             request.email, request.password, request.user_type
         )
+
+        user_email = user.email_id if request.user_type == "mentor" else user.email
+        user_name = user.full_name if request.user_type == "mentor" else user.name
+
         return {
             "message": "Login successful",
             "status": "success",
@@ -80,8 +99,8 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
                 "token_type": "bearer",
                 "user": {
                     "id": str(user.id),
-                    "email": user.email,
-                    "name": user.name,
+                    "email": user_email,
+                    "name": user_name,
                     "user_type": request.user_type
                 }
             }

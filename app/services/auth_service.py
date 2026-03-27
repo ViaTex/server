@@ -5,13 +5,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import structlog
 
-from app.models.user import Student, Corporate, College, Admin, UserSession, UserStatus
+from app.models.user import Student, Corporate, College, Mentor, Admin, UserSession, UserStatus, UserType
 from app.models.user import EmailOTP
 from app.core.security import SecurityManager
 from app.schemas.auth import (
     StudentRegisterRequest,
     CorporateRegisterRequest,
-    CollegeRegisterRequest
+    CollegeRegisterRequest,
+    MentorRegisterRequest,
 )
 from app.core.config import settings
 
@@ -25,6 +26,7 @@ class AuthService:
         if self.db.query(Student).filter(Student.email == email).first(): return True
         if self.db.query(Corporate).filter(Corporate.email == email).first(): return True
         if self.db.query(College).filter(College.email == email).first(): return True
+        if self.db.query(Mentor).filter(Mentor.email_id == email).first(): return True
         if self.db.query(Admin).filter(Admin.email == email).first(): return True
         return False
 
@@ -35,6 +37,22 @@ class AuthService:
             self.db.query(Student.student_unique_id)
             .filter(Student.student_unique_id.like(f"{prefix}%"))
             .order_by(Student.student_unique_id.desc())
+            .first()
+        )
+        next_seq = 1
+        if last and last[0]:
+            try:
+                next_seq = int(str(last[0])[-4:]) + 1
+            except Exception:
+                next_seq = 1
+        return f"{prefix}{next_seq:04d}"
+
+    def _generate_mentor_id(self) -> str:
+        prefix = "MT2026"
+        last = (
+            self.db.query(Mentor.mentor_id)
+            .filter(Mentor.mentor_id.like(f"{prefix}%"))
+            .order_by(Mentor.mentor_id.desc())
             .first()
         )
         next_seq = 1
@@ -84,6 +102,60 @@ class AuthService:
     async def verify_otp_and_register_college(self, code: str, request: CollegeRegisterRequest) -> College:
         self._consume_email_otp(request.email, code)
         return await self.register_college(request)
+
+    async def register_mentor(self, request: MentorRegisterRequest) -> Mentor:
+        try:
+            if self._is_email_taken(str(request.email_id)):
+                raise ValueError("Email already registered")
+
+            if request.total_experience < 5:
+                raise ValueError("Mentor must have at least 5 years of experience")
+
+            mentor = Mentor(
+                id=uuid.uuid4(),
+                mentor_id=self._generate_mentor_id(),
+                full_name=request.full_name,
+                email_id=str(request.email_id),
+                phone_number=request.phone_number,
+                password_hash=SecurityManager.get_password_hash(request.password),
+                current_company=request.current_company,
+                total_experience=request.total_experience,
+                domain_expertise=request.domain_expertise or [],
+            )
+
+            for _ in range(5):
+                try:
+                    self.db.add(mentor)
+                    self.db.commit()
+                    self.db.refresh(mentor)
+                    return mentor
+                except IntegrityError as e:
+                    self.db.rollback()
+                    if "mentor_id" in str(e).lower():
+                        mentor.mentor_id = self._generate_mentor_id()
+                        continue
+                    raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Mentor registration failed", error=str(e), email=str(request.email_id))
+            raise
+
+    def _is_mentor_locked(self, mentor: Mentor) -> bool:
+        if not mentor.locked_until:
+            return False
+        now = datetime.now(timezone.utc)
+        return mentor.locked_until > now
+
+    def _increment_mentor_failed_attempt(self, mentor: Mentor) -> None:
+        now = datetime.now(timezone.utc)
+        mentor.failed_attempts = (mentor.failed_attempts or 0) + 1
+        if mentor.failed_attempts >= 5:
+            mentor.locked_until = now + timedelta(hours=2)
+        self.db.commit()
+
+    def _reset_mentor_login_security(self, mentor: Mentor) -> None:
+        mentor.failed_attempts = 0
+        mentor.locked_until = None
 
     async def register_student(self, request: StudentRegisterRequest) -> Student:
         try:
@@ -197,6 +269,8 @@ class AuthService:
                 user = self.db.query(Corporate).filter(Corporate.email == email).first()
             elif user_type == "college":
                 user = self.db.query(College).filter(College.email == email).first()
+            elif user_type == "mentor":
+                user = self.db.query(Mentor).filter(Mentor.email_id == email).first()
             elif user_type == "admin":
                 user = self.db.query(Admin).filter(Admin.email == email).first()
             else:
@@ -205,9 +279,20 @@ class AuthService:
             if not user:
                 raise ValueError("User not found")
 
+            if user_type == "mentor":
+                if user.locked_until and user.locked_until <= datetime.now(timezone.utc):
+                    self._reset_mentor_login_security(user)
+                    self.db.commit()
+                elif self._is_mentor_locked(user):
+                    raise ValueError("Account locked due to multiple failed attempts. Please try again after 2 hours")
+
             if not SecurityManager.verify_password(password, user.password_hash):
+                if user_type == "mentor":
+                    self._increment_mentor_failed_attempt(user)
                 raise ValueError("Invalid password")
 
+            if user_type == "mentor":
+                self._reset_mentor_login_security(user)
             user.last_login = datetime.now(timezone.utc)
             self.db.commit()
 
@@ -224,7 +309,7 @@ class AuthService:
             session = UserSession(
                 id=uuid.uuid4(),
                 user_id=user.id,
-                user_type=user_type,
+                user_type=UserType[user_type.upper()],
                 session_token=access_token,
                 refresh_token=refresh_token,
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)

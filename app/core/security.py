@@ -251,6 +251,42 @@ async def get_current_college(
     return current_user
 
 
+async def get_current_mentor(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Get current mentor user"""
+    if current_user["user_type"] != "mentor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Mentor account required."
+        )
+    return current_user
+
+
+async def get_current_verified_mentor(
+    current_mentor: dict = Depends(get_current_mentor),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Hard gate: only verified mentors can access mentor-protected features."""
+    from uuid import UUID
+    from app.models.user import Mentor, MentorVerificationStatus
+
+    mentor = db.query(Mentor).filter(Mentor.id == UUID(current_mentor["user_id"])).first()
+    if not mentor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mentor account not found"
+        )
+
+    if mentor.verification_status != MentorVerificationStatus.VERIFIED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Mentor verification is required to access this feature"
+        )
+
+    return current_mentor
+
+
 # Dependency to get current admin
 async def get_current_admin(
     current_user: dict = Depends(get_current_user)
