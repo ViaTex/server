@@ -28,6 +28,23 @@ class AuthService:
         if self.db.query(Admin).filter(Admin.email == email).first(): return True
         return False
 
+    def _generate_student_unique_id(self) -> str:
+        year = datetime.now(timezone.utc).year
+        prefix = f"ST{year}"
+        last = (
+            self.db.query(Student.student_unique_id)
+            .filter(Student.student_unique_id.like(f"{prefix}%"))
+            .order_by(Student.student_unique_id.desc())
+            .first()
+        )
+        next_seq = 1
+        if last and last[0]:
+            try:
+                next_seq = int(str(last[0])[-4:]) + 1
+            except Exception:
+                next_seq = 1
+        return f"{prefix}{next_seq:04d}"
+
     async def send_signup_email_otp(self, email: str) -> None:
         if self._is_email_taken(email):
             raise ValueError("Email already registered")
@@ -73,6 +90,11 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
+            if not request.has_accepted_terms:
+                raise ValueError("Terms and policies must be accepted")
+
+            terms_version = request.accepted_terms_version or settings.TERMS_VERSION
+
             education_entries = []
             if request.institution:
                 education_entries.append(
@@ -94,12 +116,24 @@ class AuthService:
                 password_hash=SecurityManager.get_password_hash(request.password),
                 name=request.name,
                 phone=request.phone,
-                education=education_entries
+                education=education_entries,
+                has_accepted_terms=True,
+                accepted_terms_version=terms_version,
+                student_unique_id=self._generate_student_unique_id(),
             )
-            self.db.add(student)
-            self.db.commit()
-            self.db.refresh(student)
-            return student
+
+            for _ in range(5):
+                try:
+                    self.db.add(student)
+                    self.db.commit()
+                    self.db.refresh(student)
+                    return student
+                except IntegrityError as e:
+                    self.db.rollback()
+                    if "student_unique_id" in str(e).lower():
+                        student.student_unique_id = self._generate_student_unique_id()
+                        continue
+                    raise
         except Exception as e:
             self.db.rollback()
             logger.error("Student registration failed", error=str(e), email=request.email)
@@ -110,12 +144,19 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
+            if not request.has_accepted_terms:
+                raise ValueError("Terms and policies must be accepted")
+
+            terms_version = request.accepted_terms_version or settings.TERMS_VERSION
+
             corporate = Corporate(
                 id=uuid.uuid4(),
                 email=request.email,
                 password_hash=SecurityManager.get_password_hash(request.password),
                 name=request.contact_person or request.company_name,
-                company_name=request.company_name
+                company_name=request.company_name,
+                has_accepted_terms=True,
+                accepted_terms_version=terms_version,
             )
             self.db.add(corporate)
             self.db.commit()

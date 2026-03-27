@@ -27,6 +27,8 @@ class StudentRegisterRequest(BaseModel):
     github_profile: Optional[str] = None
     personal_website: Optional[str] = None
     college_id: Optional[str] = None
+    has_accepted_terms: bool = False
+    accepted_terms_version: Optional[str] = None
 
 class CorporateRegisterRequest(BaseModel):
     company_name: str
@@ -42,6 +44,8 @@ class CorporateRegisterRequest(BaseModel):
     address: Optional[str] = None
     description: Optional[str] = None
     company_type: Optional[str] = None
+    has_accepted_terms: bool = False
+    accepted_terms_version: Optional[str] = None
 
 class CollegeRegisterRequest(BaseModel):
     college_name: Optional[str] = None
