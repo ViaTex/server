@@ -16,6 +16,13 @@ class UserType(str, enum.Enum):
     COLLEGE = "college"
     ADMIN = "admin"
 
+
+class SessionUserType(str, enum.Enum):
+    STUDENT = "STUDENT"
+    CORPORATE = "CORPORATE"
+    COLLEGE = "COLLEGE"
+    ADMIN = "ADMIN"
+
 class Gender(str, enum.Enum):
     MALE = "male"
     FEMALE = "female"
@@ -141,7 +148,7 @@ class UserSession(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), nullable=False)
-    user_type = Column(Enum(UserType), nullable=False)
+    user_type = Column(Enum(SessionUserType), nullable=False)
     session_token = Column(String(500), nullable=False, unique=True)
     refresh_token = Column(String(500), nullable=True)
     ip_address = Column(String(45), nullable=True)
