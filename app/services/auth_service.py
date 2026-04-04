@@ -1,11 +1,11 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import Tuple
+from typing import Tuple, Optional
 import uuid
 from datetime import datetime, timedelta, timezone
 import structlog
 
-from app.models.user import Student, Corporate, College, Admin, UserSession, UserStatus
+from app.models.user import Student, Corporate, College, Admin, UserSession, UserStatus, SessionUserType
 from app.models.user import EmailOTP
 from app.core.security import SecurityManager
 from app.schemas.auth import (
@@ -21,12 +21,44 @@ class AuthService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _get_db_user_type(self, user_type: str) -> str:
+        normalized_user_type = (user_type or "").strip().lower()
+        if normalized_user_type in {"college", "university"}:
+            return SessionUserType.COLLEGE
+        if normalized_user_type == "student":
+            return SessionUserType.STUDENT
+        if normalized_user_type == "corporate":
+            return SessionUserType.CORPORATE
+        if normalized_user_type == "admin":
+            return SessionUserType.ADMIN
+        raise ValueError("Invalid user type")
+
     def _is_email_taken(self, email: str) -> bool:
         if self.db.query(Student).filter(Student.email == email).first(): return True
         if self.db.query(Corporate).filter(Corporate.email == email).first(): return True
         if self.db.query(College).filter(College.email == email).first(): return True
         if self.db.query(Admin).filter(Admin.email == email).first(): return True
         return False
+
+    def _find_user_by_email(self, email: str) -> Tuple[object, str]:
+        """Find user by email across all user types and return (user, user_type)"""
+        user = self.db.query(Student).filter(Student.email == email).first()
+        if user:
+            return user, "student"
+        
+        user = self.db.query(Corporate).filter(Corporate.email == email).first()
+        if user:
+            return user, "corporate"
+        
+        user = self.db.query(College).filter(College.email == email).first()
+        if user:
+            return user, "college"
+        
+        user = self.db.query(Admin).filter(Admin.email == email).first()
+        if user:
+            return user, "admin"
+        
+        return None, None
 
     def _generate_student_unique_id(self) -> str:
         year = datetime.now(timezone.utc).year
@@ -90,10 +122,6 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
-            if not request.has_accepted_terms:
-                raise ValueError("Terms and policies must be accepted")
-
-            terms_version = request.accepted_terms_version or settings.TERMS_VERSION
 
             education_entries = []
             if request.institution:
@@ -118,7 +146,6 @@ class AuthService:
                 phone=request.phone,
                 education=education_entries,
                 has_accepted_terms=True,
-                accepted_terms_version=terms_version,
                 student_unique_id=self._generate_student_unique_id(),
             )
 
@@ -144,11 +171,6 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
-            if not request.has_accepted_terms:
-                raise ValueError("Terms and policies must be accepted")
-
-            terms_version = request.accepted_terms_version or settings.TERMS_VERSION
-
             corporate = Corporate(
                 id=uuid.uuid4(),
                 email=request.email,
@@ -156,7 +178,6 @@ class AuthService:
                 name=request.contact_person or request.company_name,
                 company_name=request.company_name,
                 has_accepted_terms=True,
-                accepted_terms_version=terms_version,
             )
             self.db.add(corporate)
             self.db.commit()
@@ -189,21 +210,29 @@ class AuthService:
             logger.error("College registration failed", error=str(e), email=request.email)
             raise
 
-    async def login(self, email: str, password: str, user_type: str) -> Tuple[object, str, str]:
+    async def login(self, email: str, password: str, user_type: Optional[str] = None) -> Tuple[object, str, str]:
         try:
-            if user_type == "student":
-                user = self.db.query(Student).filter(Student.email == email).first()
-            elif user_type == "corporate":
-                user = self.db.query(Corporate).filter(Corporate.email == email).first()
-            elif user_type == "college":
-                user = self.db.query(College).filter(College.email == email).first()
-            elif user_type == "admin":
-                user = self.db.query(Admin).filter(Admin.email == email).first()
-            else:
-                raise ValueError("Invalid user type")
+            # If user_type is provided, use the old logic for backward compatibility
+            if user_type:
+                if user_type == "student":
+                    user = self.db.query(Student).filter(Student.email == email).first()
+                elif user_type == "corporate":
+                    user = self.db.query(Corporate).filter(Corporate.email == email).first()
+                elif user_type == "college":
+                    user = self.db.query(College).filter(College.email == email).first()
+                elif user_type == "admin":
+                    user = self.db.query(Admin).filter(Admin.email == email).first()
+                else:
+                    raise ValueError("Invalid user type")
 
-            if not user:
-                raise ValueError("User not found")
+                if not user:
+                    raise ValueError("User not found")
+            else:
+                # If user_type not provided, find user across all tables
+                user, determined_user_type = self._find_user_by_email(email)
+                if not user:
+                    raise ValueError("User not found")
+                user_type = determined_user_type
 
             if not SecurityManager.verify_password(password, user.password_hash):
                 raise ValueError("Invalid password")
@@ -224,7 +253,7 @@ class AuthService:
             session = UserSession(
                 id=uuid.uuid4(),
                 user_id=user.id,
-                user_type=user_type,
+                user_type=self._get_db_user_type(user_type),
                 session_token=access_token,
                 refresh_token=refresh_token,
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -234,5 +263,6 @@ class AuthService:
 
             return user, access_token, refresh_token
         except Exception as e:
+            self.db.rollback()
             logger.error("Login failed", error=str(e), email=email, user_type=user_type)
             raise

@@ -65,7 +65,7 @@ class CollegeRegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    user_type: str = Field(..., description="Must be one of: student, corporate, college, admin")
+    user_type: Optional[str] = Field(None, description="Must be one of: student, corporate, college, admin")
 
 class OTPVerifyRequest(BaseModel):
     email: EmailStr

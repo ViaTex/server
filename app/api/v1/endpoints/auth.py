@@ -71,6 +71,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         user, access_token, refresh_token = await auth_service.login(
             request.email, request.password, request.user_type
         )
+        resolved_user_type = request.user_type or user.__class__.__name__.lower()
         return {
             "message": "Login successful",
             "status": "success",
@@ -82,7 +83,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
                     "id": str(user.id),
                     "email": user.email,
                     "name": user.name,
-                    "user_type": request.user_type
+                    "user_type": resolved_user_type
                 }
             }
         }
