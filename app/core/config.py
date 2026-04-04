@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # Exam scoring
     EXAM_PASS_MARK: float = 7.0
 
+    # Terms and policies
+    TERMS_VERSION: str = "v1"
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:

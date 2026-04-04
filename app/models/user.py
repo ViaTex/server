@@ -77,6 +77,10 @@ class Student(BaseUser):
     personal_website = Column(String(500), nullable=True)
     resume_url = Column(String(1000), nullable=True)
 
+    has_accepted_terms = Column(Boolean, default=False, nullable=False)
+    accepted_terms_version = Column(String(50), nullable=True)
+    student_unique_id = Column(String(10), unique=True, index=True, nullable=True)
+
     current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
     badge = Column(String(20), nullable=True)
     
@@ -105,6 +109,9 @@ class Corporate(BaseUser):
     
     description = Column(Text, nullable=True)
     company_type = Column(String(100), nullable=True)
+
+    has_accepted_terms = Column(Boolean, default=False, nullable=False)
+    accepted_terms_version = Column(String(50), nullable=True)
     
 
 class College(BaseUser):

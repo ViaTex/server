@@ -244,6 +244,7 @@ class StudentProfileUpdate(StudentProfileBase):
 class StudentProfileResponse(StudentProfileBase):
     id: str
     email: EmailStr
+    student_unique_id: Optional[str] = None
 
     @field_validator("id", mode="before")
     @classmethod

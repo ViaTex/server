@@ -11,7 +11,8 @@ This guide describes how to deploy the **DishaSetu API** (FastAPI backend) to a 
 ## 1. Connect to the Server
 
 ```bash
-ssh ssh dishasetu@135.235.182.119
+ssh dishasetu@135.235.182.119
+dishasetu@1234
 cd ~/server
 ```
 
@@ -364,3 +365,109 @@ sudo systemctl restart dishasetu-api
 sudo systemctl status dishasetu-api
 ```
 
+A. Server (Azure VM) – expose API as https://api.dishasetu.in
+1. DNS
+In your DNS provider for dishasetu.in:
+
+Add an A record:
+
+Name: api
+Type: A
+Value: 135.235.182.119
+Wait a few minutes so api.dishasetu.in resolves to your VM (you can check later with ping api.dishasetu.in from your PC).
+
+2. Install nginx + certbot (if not already)
+On the VM:
+
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+Check nginx:
+
+sudo systemctl status nginx
+(It should be active (running).)
+
+3. Create nginx site for the API
+On the VM:
+
+sudo nano /etc/nginx/sites-available/api.dishasetu.in
+Paste this:
+
+server {
+    listen 80;
+    server_name api.dishasetu.in;
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection 'upgrade';
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+Save and exit.
+
+Enable and reload:
+
+sudo ln -s /etc/nginx/sites-available/api.dishasetu.in /etc/nginx/sites-enabled/api.dishasetu.in
+sudo nginx -t
+sudo systemctl reload nginx
+Now http://api.dishasetu.in should show your API (same as http://135.235.182.119:8000).
+
+4. Add HTTPS with Let’s Encrypt
+Run:
+
+sudo certbot --nginx -d api.dishasetu.in
+Enter email.
+Agree to terms.
+When asked, choose the option to redirect HTTP to HTTPS.
+Certbot will update the nginx config to serve https://api.dishasetu.in with a valid certificate.
+
+Test from the VM:
+
+curl -k https://api.dishasetu.in/
+You should see your API root JSON (e.g. "Welcome to DishaSetu API").
+
+5. Adjust server .env (VM)
+On the VM, edit ~/server/.env:
+
+nano ~/server/.env
+Make sure you have:
+
+APP_URL=https://api.dishasetu.in
+# CORS
+BACKEND_CORS_ORIGINS=["https://dishasetu.in","https://api.dishasetu.in"]
+Save, then restart the service:
+
+sudo systemctl restart dishasetu-api
+sudo systemctl status dishasetu-api
+Backend is now ready to accept HTTPS traffic via https://api.dishasetu.in.
+
+B. Frontend – point to the HTTPS API
+Your local dev file client/.env.locals is:
+
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_API_VERSION=v1
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+Keep that for local development.
+
+For production (where https://dishasetu.in is deployed), set the environment variables there to:
+
+NEXT_PUBLIC_API_BASE_URL=https://api.dishasetu.in
+NEXT_PUBLIC_API_VERSION=v1
+NEXT_PUBLIC_API_URL=https://api.dishasetu.in/api/v1
+Exactly how you set this depends on where your frontend is hosted:
+
+If on Vercel: Project → Settings → Environment Variables → add the above under “Production”, then redeploy.
+If served by nginx on a server: Edit the prod .env used at build time, then run npm run build && npm run start (or your deploy script) again.
+If built locally and uploaded: Rebuild with these envs set, then redeploy.
+Your apiClient / axios code should already be using NEXT_PUBLIC_API_URL (or base + version). If it’s hard‑coded anywhere to http://135.235.182.119:8000, replace that with the env variable.
+
+C. After deployment – what should happen
+Page: https://dishasetu.in/auth/login
+API calls: https://api.dishasetu.in/api/v1/auth/login (HTTPS)
+nginx on VM: proxies to http://127.0.0.1:8000/api/v1/auth/login
+No more “Mixed Content” warning; CORS already allows https://dishasetu.in and https://api.dishasetu.in.
+If you tell me where your frontend is deployed (Vercel / some server / same Azure VM), I can give the exact command(s) or config snippet for setting those NEXT_PUBLIC_* variables in that place.
