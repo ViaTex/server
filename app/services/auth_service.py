@@ -122,10 +122,6 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
-            if not request.has_accepted_terms:
-                raise ValueError("Terms and policies must be accepted")
-
-            terms_version = request.accepted_terms_version or settings.TERMS_VERSION
 
             education_entries = []
             if request.institution:
@@ -150,7 +146,6 @@ class AuthService:
                 phone=request.phone,
                 education=education_entries,
                 has_accepted_terms=True,
-                accepted_terms_version=terms_version,
                 student_unique_id=self._generate_student_unique_id(),
             )
 
@@ -176,11 +171,6 @@ class AuthService:
             if self._is_email_taken(request.email):
                 raise ValueError("Email already registered")
 
-            if not request.has_accepted_terms:
-                raise ValueError("Terms and policies must be accepted")
-
-            terms_version = request.accepted_terms_version or settings.TERMS_VERSION
-
             corporate = Corporate(
                 id=uuid.uuid4(),
                 email=request.email,
@@ -188,7 +178,6 @@ class AuthService:
                 name=request.contact_person or request.company_name,
                 company_name=request.company_name,
                 has_accepted_terms=True,
-                accepted_terms_version=terms_version,
             )
             self.db.add(corporate)
             self.db.commit()
