@@ -260,7 +260,6 @@ async def submit_section_b_response(
         raise HTTPException(status_code=400, detail="Invalid session_id or response_id") from exc
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
-    _ensure_step(session, "SECTION_B")
 
     response = (
         db.query(ExamResponse)
@@ -273,6 +272,11 @@ async def submit_section_b_response(
     )
     if not response:
         raise HTTPException(status_code=404, detail="Exam response not found")
+
+    if session.current_step != "SECTION_B":
+        if session.current_step == "SECTION_C" and response.user_response:
+            return {"message": "Section B already submitted", "current_step": session.current_step}
+        raise HTTPException(status_code=409, detail=f"Current step is {session.current_step}")
 
     try:
         question_payload = json.loads(response.question_text)
@@ -512,7 +516,6 @@ async def submit_section_d_response(
         raise HTTPException(status_code=400, detail="Invalid session_id or response_id") from exc
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
-    _ensure_step(session, "SECTION_D")
 
     response = (
         db.query(ExamResponse)
@@ -525,6 +528,11 @@ async def submit_section_d_response(
     )
     if not response:
         raise HTTPException(status_code=404, detail="Exam response not found")
+
+    if session.current_step != "SECTION_D":
+        if session.current_step == "PENDING_MENTOR_REVIEW" and response.user_response:
+            return {"message": "Section D already submitted", "current_step": session.current_step}
+        raise HTTPException(status_code=409, detail=f"Current step is {session.current_step}")
 
     file_bytes = await media_file.read()
     if not file_bytes:
