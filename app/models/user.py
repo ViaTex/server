@@ -89,6 +89,7 @@ class Student(BaseUser):
     student_unique_id = Column(String(10), unique=True, index=True, nullable=True)
 
     current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
+    skill_profile = Column(JSONB, nullable=True)
     badge = Column(String(20), nullable=True)
     
     college_id = Column(String(255), nullable=True)
