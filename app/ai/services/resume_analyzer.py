@@ -53,19 +53,41 @@ Please provide a comprehensive analysis in the following JSON format ONLY:
 Return only valid JSON."""
 
         client = Groq(api_key=settings.GROQ_API_KEY)
-        response = client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=4000,
-            response_format={"type": "json_object"}
-        )
+
+        # Try configured model first, then known active fallbacks.
+        configured_model = (settings.GROQ_ANALYSIS_MODEL or "").strip()
+        model_candidates = [
+            configured_model,
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+        ]
+        # Remove blanks while preserving order and uniqueness.
+        model_candidates = list(dict.fromkeys([m for m in model_candidates if m]))
+
+        response = None
+        last_error: Exception | None = None
+        for model_name in model_candidates:
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=4000,
+                    response_format={"type": "json_object"}
+                )
+                logger.info("Groq ATS analysis completed using model: %s", model_name)
+                break
+            except Exception as model_error:
+                last_error = model_error
+                logger.warning("Groq ATS model '%s' failed: %s", model_name, model_error)
+
+        if response is None:
+            raise ValueError(f"All Groq ATS model attempts failed: {last_error}")
         
         result_text = response.choices[0].message.content
         if not result_text:
             raise ValueError("Empty response from Groq API")
         
-        logger.info("Groq ATS analysis completed")
         try:
             return json.loads(result_text)
         except json.JSONDecodeError:
