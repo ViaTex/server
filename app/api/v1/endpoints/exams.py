@@ -343,7 +343,21 @@ async def submit_section_b_response(
         raise HTTPException(status_code=400, detail="Invalid session_id or response_id") from exc
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
-    _ensure_step(session, "SECTION_B")
+
+    if session.current_step != "SECTION_B":
+        # Idempotency guard: allow resubmits after successful SECTION_B completion.
+        existing = (
+            db.query(ExamResponse)
+            .filter(
+                ExamResponse.id == response_uuid,
+                ExamResponse.session_id == session.id,
+                ExamResponse.section_type == "B_FUNDAMENTALS",
+            )
+            .first()
+        )
+        if existing and existing.ai_score is not None:
+            return {"message": "Section B already submitted", "current_step": session.current_step}
+        _ensure_step(session, "SECTION_B")
 
     response = (
         db.query(ExamResponse)
