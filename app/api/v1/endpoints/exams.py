@@ -85,6 +85,38 @@ def _round_score(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _update_skill_profile(
+    student: Student,
+    topic_scores: dict[str, float],
+) -> None:
+    if not topic_scores:
+        return
+
+    profile = student.skill_profile if isinstance(student.skill_profile, dict) else {}
+
+    for topic, score in topic_scores.items():
+        if not isinstance(topic, str) or not topic.strip():
+            continue
+        try:
+            new_score = float(score)
+        except (TypeError, ValueError):
+            continue
+
+        entry = profile.get(topic) if isinstance(profile.get(topic), dict) else {}
+        old_avg = float(entry.get("avg") or 0.0)
+        attempts = int(entry.get("attempts") or 0)
+        new_avg = round(((old_avg * attempts) + new_score) / (attempts + 1), 2)
+        trend = round(new_avg - old_avg, 2)
+
+        profile[topic] = {
+            "avg": new_avg,
+            "attempts": attempts + 1,
+            "trend": trend,
+        }
+
+    student.skill_profile = profile
+
+
 @router.get("/sessions/{session_id}")
 async def get_exam_session_status(
     session_id: str,
@@ -163,10 +195,24 @@ async def submit_section_a(
         db,
         session_id=session.id,
         section_type="A_INTRO",
-        question_text=SECTION_A_PROMPT,
-        user_response=video_url,
+        question_text=json.dumps(
+            {
+                "prompt_text": SECTION_A_PROMPT,
+                "mcqs": [],
+                "long_questions": [],
+                "topics": [],
+            }
+        ),
+        user_response=json.dumps(
+            {
+                "text_answer": "",
+                "video_url": video_url,
+                "mcq_answers": {},
+                "long_answers": {},
+            }
+        ),
     )
-    set_current_step(db, session=session, next_step="SECTION_B")
+    set_current_step(db, session=session, next_step="PENDING_MENTOR_REVIEW")
 
     background_tasks.add_task(process_section_a_intro_ai, str(response.id), video_url)
 
@@ -204,11 +250,22 @@ async def generate_section_b_question(
     if existing:
         question_payload = None
         try:
-            question_payload = json.loads(existing.question_text)
+            stored_payload = json.loads(existing.question_text)
+            if isinstance(stored_payload, dict) and "prompt_text" in stored_payload:
+                question_payload = stored_payload
+            elif isinstance(stored_payload, dict):
+                question_payload = {
+                    "prompt_text": "",
+                    "mcqs": stored_payload.get("mcqs", []),
+                    "long_questions": stored_payload.get("long_questions", []),
+                    "topics": stored_payload.get("topics", []),
+                }
         except json.JSONDecodeError:
             question_payload = {
+                "prompt_text": "",
                 "mcqs": [],
                 "long_questions": [{"id": "l1", "question": existing.question_text}],
+                "topics": [],
             }
 
         return {
@@ -222,12 +279,25 @@ async def generate_section_b_question(
         question_payload, answer_key = generate_section_b_questions(student=student)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    question_schema = {
+        "prompt_text": "",
+        "mcqs": question_payload.get("mcqs", []),
+        "long_questions": question_payload.get("long_questions", []),
+        "topics": question_payload.get("topics", []),
+    }
     response = create_exam_response(
         db,
         session_id=session.id,
         section_type="B_FUNDAMENTALS",
-        question_text=json.dumps(question_payload),
-        user_response="",
+        question_text=json.dumps(question_schema),
+        user_response=json.dumps(
+            {
+                "text_answer": "",
+                "video_url": "",
+                "mcq_answers": {},
+                "long_answers": {},
+            }
+        ),
         transcript=json.dumps(answer_key),
     )
 
@@ -279,7 +349,16 @@ async def submit_section_b_response(
         raise HTTPException(status_code=409, detail=f"Current step is {session.current_step}")
 
     try:
-        question_payload = json.loads(response.question_text)
+        stored_payload = json.loads(response.question_text)
+        if isinstance(stored_payload, dict) and "prompt_text" in stored_payload:
+            question_payload = stored_payload
+        else:
+            question_payload = {
+                "prompt_text": "",
+                "mcqs": stored_payload.get("mcqs", []) if isinstance(stored_payload, dict) else [],
+                "long_questions": stored_payload.get("long_questions", []) if isinstance(stored_payload, dict) else [],
+                "topics": stored_payload.get("topics", []) if isinstance(stored_payload, dict) else [],
+            }
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail="Stored Section B questions are invalid") from exc
 
@@ -321,8 +400,10 @@ async def submit_section_b_response(
     final_score = max(1.0, min(10.0, final_score))
 
     payload_to_store = {
-        "mcq_answers": mcq_answers,
-        "long_answers": long_answers,
+        "text_answer": "",
+        "video_url": "",
+        "mcq_answers": mcq_answer_map,
+        "long_answers": long_answer_map,
     }
     update_response_answer(db, response=response, user_response=json.dumps(payload_to_store))
     response.ai_score = final_score
@@ -361,25 +442,54 @@ async def generate_section_c_question(
         .first()
     )
     if existing:
+        question_payload = None
+        try:
+            stored_payload = json.loads(existing.question_text)
+            if isinstance(stored_payload, dict) and "prompt_text" in stored_payload:
+                question_payload = stored_payload
+        except json.JSONDecodeError:
+            question_payload = None
+
+        if question_payload is None:
+            question_payload = {
+                "prompt_text": existing.question_text,
+                "mcqs": [],
+                "long_questions": [],
+                "topics": [],
+            }
+
         return {
             "response_id": str(existing.id),
-            "question_text": existing.question_text,
+            "question_text": question_payload,
             "section_type": existing.section_type,
         }
 
     student = _load_student(db, session.student_id)
     question = generate_section_question(section_type="C_LOGIC", student=student)
+    question_schema = {
+        "prompt_text": question,
+        "mcqs": [],
+        "long_questions": [],
+        "topics": [],
+    }
     response = create_exam_response(
         db,
         session_id=session.id,
         section_type="C_LOGIC",
-        question_text=question,
-        user_response="",
+        question_text=json.dumps(question_schema),
+        user_response=json.dumps(
+            {
+                "text_answer": "",
+                "video_url": "",
+                "mcq_answers": {},
+                "long_answers": {},
+            }
+        ),
     )
 
     return {
         "response_id": str(response.id),
-        "question_text": question,
+        "question_text": question_schema,
         "section_type": response.section_type,
     }
 
@@ -417,10 +527,29 @@ async def submit_section_c_response(
     if not response:
         raise HTTPException(status_code=404, detail="Exam response not found")
 
-    update_response_answer(db, response=response, user_response=str(user_response))
+    update_response_answer(
+        db,
+        response=response,
+        user_response=json.dumps(
+            {
+                "text_answer": str(user_response),
+                "video_url": "",
+                "mcq_answers": {},
+                "long_answers": {},
+            }
+        ),
+    )
+    question_text_for_scoring = response.question_text
+    try:
+        stored_payload = json.loads(response.question_text)
+        if isinstance(stored_payload, dict) and stored_payload.get("prompt_text"):
+            question_text_for_scoring = stored_payload.get("prompt_text")
+    except json.JSONDecodeError:
+        question_text_for_scoring = response.question_text
+
     analysis = score_text_response(
         section_type="C_LOGIC",
-        question_text=response.question_text,
+        question_text=question_text_for_scoring,
         user_response=str(user_response),
     )
     response.ai_score = analysis.get("score")
@@ -459,9 +588,25 @@ async def generate_section_d_question(
         .first()
     )
     if existing:
+        question_payload = None
+        try:
+            stored_payload = json.loads(existing.question_text)
+            if isinstance(stored_payload, dict) and "prompt_text" in stored_payload:
+                question_payload = stored_payload
+        except json.JSONDecodeError:
+            question_payload = None
+
+        if question_payload is None:
+            question_payload = {
+                "prompt_text": existing.question_text,
+                "mcqs": [],
+                "long_questions": [],
+                "topics": [],
+            }
+
         return {
             "response_id": str(existing.id),
-            "question_text": existing.question_text,
+            "question_text": question_payload,
             "section_type": existing.section_type,
         }
 
@@ -475,24 +620,46 @@ async def generate_section_d_question(
         .order_by(ExamResponse.id.desc())
         .first()
     )
-    prior_context = last_logic.user_response if last_logic else None
+    prior_context = None
+    if last_logic and last_logic.user_response:
+        try:
+            last_payload = json.loads(last_logic.user_response)
+            if isinstance(last_payload, dict):
+                prior_context = last_payload.get("text_answer") or last_logic.user_response
+            else:
+                prior_context = last_logic.user_response
+        except json.JSONDecodeError:
+            prior_context = last_logic.user_response
     question = generate_section_question(
         section_type="D_DEBUG",
         student=student,
         prior_context=prior_context,
     )
 
+    question_schema = {
+        "prompt_text": question,
+        "mcqs": [],
+        "long_questions": [],
+        "topics": [],
+    }
     response = create_exam_response(
         db,
         session_id=session.id,
         section_type="D_DEBUG",
-        question_text=question,
-        user_response="",
+        question_text=json.dumps(question_schema),
+        user_response=json.dumps(
+            {
+                "text_answer": "",
+                "video_url": "",
+                "mcq_answers": {},
+                "long_answers": {},
+            }
+        ),
     )
 
     return {
         "response_id": str(response.id),
-        "question_text": question,
+        "question_text": question_schema,
         "section_type": response.section_type,
     }
 
@@ -548,7 +715,18 @@ async def submit_section_d_response(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to upload media: {exc}") from exc
 
-    update_response_answer(db, response=response, user_response=video_url)
+    update_response_answer(
+        db,
+        response=response,
+        user_response=json.dumps(
+            {
+                "text_answer": "",
+                "video_url": video_url,
+                "mcq_answers": {},
+                "long_answers": {},
+            }
+        ),
+    )
     set_current_step(db, session=session, next_step="PENDING_MENTOR_REVIEW")
 
     background_tasks.add_task(process_section_d_debug_ai, str(response.id), video_url)
@@ -606,10 +784,10 @@ async def calculate_final_score(
     mentor_a = _to_decimal(response_a.mentor_score, label="Section A mentor_score")
     mentor_d = _to_decimal(response_d.mentor_score, label="Section D mentor_score")
 
-    section_a_score = _round_score((ai_a + mentor_a) / Decimal("2"))
+    section_a_score = _round_score((ai_a * Decimal("0.3")) + (mentor_a * Decimal("0.7")))
     section_b_score = _round_score(ai_b)
     section_c_score = _round_score(ai_c)
-    section_d_score = _round_score((ai_d + mentor_d) / Decimal("2"))
+    section_d_score = _round_score((ai_d * Decimal("0.7")) + (mentor_d * Decimal("0.3")))
 
     total = (
         section_a_score * Decimal("0.10")
@@ -630,6 +808,16 @@ async def calculate_final_score(
             "D_DEBUG": float(section_d_score),
         }
     }
+
+    for response in responses:
+        feedback = response.ai_feedback if isinstance(response.ai_feedback, dict) else {}
+        topic_scores = feedback.get("topic_scores") if isinstance(feedback.get("topic_scores"), dict) else {}
+        _update_skill_profile(session.student, topic_scores)
+
+    session.student.current_des_score = float(total)
+    db.add(session.student)
+    db.commit()
+    db.refresh(session.student)
 
     finalize_exam(
         db,
