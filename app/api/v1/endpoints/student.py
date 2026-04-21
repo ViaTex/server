@@ -310,3 +310,105 @@ async def delete_education(
         change_type="education_update",
     )
     return {"message": "Education entry deleted"}
+
+
+from app.ai.services.resume_analyzer import get_ats_score_from_llm
+from app.models.resume_status import ResumeStatus
+from app.services.resume_status_service import ResumeStatusService
+import urllib.request
+import tempfile
+import pdfplumber
+
+@router.get("/resume/status")
+async def get_resume_status(
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(404, "Student not found")
+    
+    # Get or create resume status record
+    resume_status = ResumeStatusService.get_or_create(db, student.id)
+    
+    # Return the status in the expected format
+    return ResumeStatusService.to_resume_status_response(resume_status)
+
+
+@router.post("/resume/upload")
+async def upload_resume_new(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    content = await file.read()
+    MAX_SIZE = 5 * 1024 * 1024
+    if len(content) > MAX_SIZE:
+        raise HTTPException(413, "File too large. Maximum: 5MB")
+        
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(404, "Student not found")
+
+    try:
+        result = cloudinary.uploader.upload(
+            content,
+            resource_type="auto",
+            folder="student_resumes"
+        )
+        
+        secure_url = result.get("secure_url")
+        
+        # Update student model for backward compatibility
+        student.resume_url = secure_url
+        db.commit()
+        
+        # Update resume_status table
+        ResumeStatusService.update_resume_info(
+            db,
+            student.id,
+            resume_url=secure_url,
+            has_resume=True,
+            resume_uploaded=True,
+        )
+        
+        return {"message": "Resume uploaded successfully", "resume_url": secure_url}
+        
+    except Exception as e:
+        raise HTTPException(500, f"Upload failed: {str(e)}")
+
+@router.get("/resume/ats-score")
+async def get_ats_score(
+    job_description: str = None,
+    force_regenerate: bool = False,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(404, "Student not found")
+        
+    if not student.resume_url:
+        raise HTTPException(400, "No resume uploaded. Please upload a resume first.")
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            urllib.request.urlretrieve(student.resume_url, tmp.name)
+            resume_text = ""
+            with pdfplumber.open(tmp.name) as pdf:
+                for page in pdf.pages:
+                    resume_text += page.extract_text() + "\n"
+        
+        if not resume_text or len(resume_text.strip()) < 50:
+            raise HTTPException(400, "Could not extract text from resume")
+            
+        ats_result = get_ats_score_from_llm(resume_text, job_description)
+        
+        # Save ATS score to resume_status table
+        ResumeStatusService.update_ats_score(db, student.id, ats_result)
+        
+        return ats_result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get ATS score: {str(e)}")
+
