@@ -40,6 +40,21 @@ class ResumeStatusService:
         status.resume_url = resume_url
         status.has_resume = has_resume
         status.resume_uploaded = resume_uploaded
+
+        # Resume changed, so previously computed ATS analysis becomes stale.
+        status.ats_score = None
+        status.overall_assessment = None
+        status.formatting_score = None
+        status.content_score = None
+        status.keyword_score = None
+        status.strengths = None
+        status.weaknesses = None
+        status.recommendations = None
+        status.keyword_analysis = None
+        status.sections_analysis = None
+        status.extracted_skills = None
+        status.ats_calculated_at = None
+
         status.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(status)
@@ -110,6 +125,19 @@ class ResumeStatusService:
             "resume_url": status.resume_url,
             "last_updated": status.updated_at.isoformat() if status.updated_at else None,
             "can_upload": status.can_upload,
+            "can_calculate_ats": status.has_resume,
+            "ats_score": status.ats_score,
+            "overall_assessment": status.overall_assessment,
+            "strengths": status.strengths or [],
+            "weaknesses": status.weaknesses or [],
+            "keyword_analysis": status.keyword_analysis or {},
+            "sections_analysis": status.sections_analysis or {},
+            "recommendations": status.recommendations or [],
+            "formatting_score": status.formatting_score,
+            "content_score": status.content_score,
+            "keyword_score": status.keyword_score,
+            "extracted_skills": status.extracted_skills or {},
+            "ats_calculated_at": status.ats_calculated_at.isoformat() if status.ats_calculated_at else None,
         }
 
     @staticmethod
