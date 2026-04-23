@@ -47,6 +47,18 @@ class CorporateRegisterRequest(BaseModel):
     has_accepted_terms: bool = False
     accepted_terms_version: Optional[str] = None
 
+
+class MentorRegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    phone: Optional[str] = None
+    user_id: Optional[str] = None
+    current_role: Optional[str] = None
+    expertise_areas: Optional[List[str]] = None
+    experience_years: Optional[int] = None
+    motivation: Optional[str] = None
+
 class CollegeRegisterRequest(BaseModel):
     college_name: Optional[str] = None
     email: EmailStr
@@ -65,7 +77,7 @@ class CollegeRegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    user_type: Optional[str] = Field(None, description="Must be one of: student, corporate, college, admin")
+    user_type: Optional[str] = Field(None, description="Must be one of: student, mentor, corporate, college, admin")
 
 class OTPVerifyRequest(BaseModel):
     email: EmailStr
