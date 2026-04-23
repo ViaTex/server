@@ -298,7 +298,6 @@ async def generate_section_b_question(
                 "long_answers": {},
             }
         ),
-        transcript=json.dumps(answer_key),
     )
 
     return {
