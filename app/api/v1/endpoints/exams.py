@@ -430,7 +430,6 @@ async def generate_section_c_question(
         raise HTTPException(status_code=400, detail="Invalid session_id") from exc
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
-    _ensure_step(session, "SECTION_C")
 
     existing = (
         db.query(ExamResponse)
@@ -513,7 +512,6 @@ async def submit_section_c_response(
         raise HTTPException(status_code=400, detail="Invalid session_id or response_id") from exc
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
-    _ensure_step(session, "SECTION_C")
 
     response = (
         db.query(ExamResponse)
@@ -526,6 +524,11 @@ async def submit_section_c_response(
     )
     if not response:
         raise HTTPException(status_code=404, detail="Exam response not found")
+
+    if session.current_step != "SECTION_C":
+        if session.current_step == "SECTION_D" and response.user_response:
+            return {"message": "Section C already submitted", "current_step": session.current_step}
+        raise HTTPException(status_code=409, detail=f"Current step is {session.current_step}")
 
     update_response_answer(
         db,
