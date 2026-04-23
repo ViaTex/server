@@ -225,6 +225,18 @@ async def get_current_student(
     return current_user
 
 
+async def get_current_mentor(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Get current mentor user"""
+    if current_user["user_type"] != "mentor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Mentor account required."
+        )
+    return current_user
+
+
 # Dependency to get current corporate
 async def get_current_corporate(
     current_user: dict = Depends(get_current_user)
