@@ -21,6 +21,7 @@ from app.models.exam_session import ExamSession
 from app.models.user import Student
 from app.services.cloudinary_service import CloudinaryService
 from app.services.exam_response_service import create_exam_response, update_response_answer
+from app.services.exam_review_assignment_service import assign_mentor_if_possible
 
 from app.services.exam_session_service import (
     create_exam_session,
@@ -700,6 +701,8 @@ async def submit_section_d_response(
 
     if session.current_step != "SECTION_D":
         if session.current_step == "PENDING_MENTOR_REVIEW" and response.user_response:
+            student = _load_student(db, session.student_id)
+            assign_mentor_if_possible(db, session=session, student=student)
             return {"message": "Section D already submitted", "current_step": session.current_step}
         raise HTTPException(status_code=409, detail=f"Current step is {session.current_step}")
 
@@ -730,6 +733,8 @@ async def submit_section_d_response(
         ),
     )
     set_current_step(db, session=session, next_step="PENDING_MENTOR_REVIEW")
+    student = _load_student(db, session.student_id)
+    assign_mentor_if_possible(db, session=session, student=student)
 
     background_tasks.add_task(process_section_d_debug_ai, str(response.id), video_url)
 
