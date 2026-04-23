@@ -51,8 +51,7 @@ def upgrade() -> None:
 
     if "profile_vector" in student_columns:
         op.drop_column("students", "profile_vector")
-    if "skill_profile" in student_columns:
-        op.drop_column("students", "skill_profile")
+
 
 
 def downgrade() -> None:
