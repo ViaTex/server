@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -9,6 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_mentor, get_current_student
+from app.models.exam_response import ExamResponse
+from app.models.exam_review_assignment import ExamReviewAssignment
+from app.models.exam_session import ExamSession
 from app.models.user import Mentor, SkillEvaluation, Student
 from app.schemas.mentor import (
     MentorProfileResponse,
@@ -19,8 +24,53 @@ from app.schemas.mentor import (
     SkillEvaluationScoringUpdate,
     SkillEvaluationStudentReviewUpdate,
 )
+from app.schemas.mentor_review import (
+    ExamReviewAssignmentDetail,
+    ExamReviewAssignmentItem,
+    ExamReviewResponsePayload,
+    ExamReviewStudentPayload,
+    MentorExamReviewScore,
+)
 
 router = APIRouter()
+
+
+def _extract_video_url(user_response: str | None) -> str | None:
+    if not user_response:
+        return None
+    try:
+        payload = json.loads(user_response)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict):
+        video_url = payload.get("video_url")
+        if isinstance(video_url, str) and video_url.strip():
+            return video_url
+    return None
+
+
+def _parse_json_or_text(raw: str | None):
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return raw
+
+
+def _build_response_payload(response: ExamResponse) -> ExamReviewResponsePayload:
+    return ExamReviewResponsePayload(
+        response_id=str(response.id),
+        section_type=response.section_type,
+        question_text=_parse_json_or_text(response.question_text),
+        user_response=_parse_json_or_text(response.user_response),
+        video_url=_extract_video_url(response.user_response),
+        transcript=response.transcript,
+        ai_score=float(response.ai_score) if response.ai_score is not None else None,
+        ai_feedback=response.ai_feedback,
+        mentor_score=float(response.mentor_score) if response.mentor_score is not None else None,
+        mentor_feedback=response.mentor_feedback,
+    )
 
 
 def _as_datetime_list(raw_slots: list) -> list[datetime]:
@@ -75,6 +125,23 @@ def _refresh_mentor_rating(db: Session, mentor_id: UUID) -> None:
     mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
     if mentor:
         mentor.average_rating = float(avg_rating or 0.0)
+
+
+def _serialize_review_assignment(
+    assignment: ExamReviewAssignment,
+    *,
+    student_id: UUID | None,
+) -> ExamReviewAssignmentItem:
+    return ExamReviewAssignmentItem(
+        session_id=str(assignment.session_id),
+        student_id=str(student_id) if student_id else "",
+        mentor_id=str(assignment.mentor_id) if assignment.mentor_id else None,
+        status=assignment.status,
+        assigned_at=assignment.assigned_at,
+        completed_at=assignment.completed_at,
+        created_at=assignment.created_at,
+        updated_at=assignment.updated_at,
+    )
 
 
 @router.get("/profile", response_model=MentorProfileResponse)
@@ -282,3 +349,138 @@ async def submit_student_review(
     db.commit()
     db.refresh(evaluation)
     return _serialize_evaluation(evaluation)
+
+
+@router.get("/exam-reviews", response_model=list[ExamReviewAssignmentItem])
+async def list_exam_review_assignments(
+    status_filter: str | None = Query(None, alias="status"),
+    current_user: dict = Depends(get_current_mentor),
+    db: Session = Depends(get_db),
+):
+    mentor_id = UUID(str(current_user["user_id"]))
+    query = (
+        db.query(ExamReviewAssignment, ExamSession)
+        .join(ExamSession, ExamReviewAssignment.session_id == ExamSession.id)
+        .filter(ExamReviewAssignment.mentor_id == mentor_id)
+    )
+    if status_filter:
+        query = query.filter(ExamReviewAssignment.status == status_filter)
+
+    assignments = query.order_by(ExamReviewAssignment.created_at.desc()).all()
+    items: list[ExamReviewAssignmentItem] = []
+    for assignment, session in assignments:
+        items.append(_serialize_review_assignment(assignment, student_id=session.student_id))
+    return items
+
+
+@router.get("/exam-reviews/{session_id}", response_model=ExamReviewAssignmentDetail)
+async def get_exam_review_detail(
+    session_id: str,
+    current_user: dict = Depends(get_current_mentor),
+    db: Session = Depends(get_db),
+):
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
+
+    mentor_id = UUID(str(current_user["user_id"]))
+    assignment = (
+        db.query(ExamReviewAssignment)
+        .filter(
+            ExamReviewAssignment.session_id == session_uuid,
+            ExamReviewAssignment.mentor_id == mentor_id,
+        )
+        .first()
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Review assignment not found")
+
+    session = db.query(ExamSession).filter(ExamSession.id == session_uuid).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Exam session not found")
+
+    student = db.query(Student).filter(Student.id == session.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    responses = (
+        db.query(ExamResponse)
+        .filter(ExamResponse.session_id == session.id)
+        .all()
+    )
+    response_map = {item.section_type: item for item in responses}
+    response_a = response_map.get("A_INTRO")
+    response_d = response_map.get("D_DEBUG")
+    if not response_a or not response_d:
+        raise HTTPException(status_code=404, detail="Missing Section A or D responses")
+
+    student_payload = ExamReviewStudentPayload(
+        student_id=str(student.id),
+        name=student.name,
+        technical_skills=student.technical_skills,
+        resume_url=student.resume_url,
+    )
+
+    return ExamReviewAssignmentDetail(
+        session_id=str(session.id),
+        current_step=session.current_step,
+        exam_level=session.exam_level,
+        student=student_payload,
+        section_a=_build_response_payload(response_a),
+        section_d=_build_response_payload(response_d),
+    )
+
+
+@router.post("/exam-reviews/{session_id}/score")
+async def submit_exam_review_score(
+    session_id: str,
+    payload: MentorExamReviewScore,
+    current_user: dict = Depends(get_current_mentor),
+    db: Session = Depends(get_db),
+):
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
+
+    mentor_id = UUID(str(current_user["user_id"]))
+    assignment = (
+        db.query(ExamReviewAssignment)
+        .filter(
+            ExamReviewAssignment.session_id == session_uuid,
+            ExamReviewAssignment.mentor_id == mentor_id,
+        )
+        .first()
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Review assignment not found")
+
+    responses = (
+        db.query(ExamResponse)
+        .filter(ExamResponse.session_id == session_uuid)
+        .all()
+    )
+    response_map = {item.section_type: item for item in responses}
+    response_a = response_map.get("A_INTRO")
+    response_d = response_map.get("D_DEBUG")
+    if not response_a or not response_d:
+        raise HTTPException(status_code=404, detail="Missing Section A or D responses")
+
+    feedback_a = payload.section_a.feedback.model_dump()
+    feedback_d = payload.section_d.feedback.model_dump()
+    if payload.section_d.topic_scores:
+        feedback_d["topic_scores"] = payload.section_d.topic_scores
+
+    response_a.mentor_score = payload.section_a.score
+    response_a.mentor_feedback = feedback_a
+    response_d.mentor_score = payload.section_d.score
+    response_d.mentor_feedback = feedback_d
+
+    assignment.status = "completed"
+    assignment.completed_at = datetime.now(timezone.utc)
+
+    db.add_all([response_a, response_d, assignment])
+    db.commit()
+
+    return {"message": "Mentor review submitted"}
