@@ -212,7 +212,7 @@ async def submit_section_a(
             }
         ),
     )
-    set_current_step(db, session=session, next_step="PENDING_MENTOR_REVIEW")
+    set_current_step(db, session=session, next_step="SECTION_B")
 
     background_tasks.add_task(process_section_a_intro_ai, str(response.id), video_url)
 
