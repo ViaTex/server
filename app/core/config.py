@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     AWS_BUCKET: str = ""
 
     # Embeddings
-    RESUME_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    RESUME_EMBEDDING_MODEL: str = "BAAI/bge-m3"
 
     # Resume builder / SSO (optional; falls back to SECRET_KEY if unset)
     RESUME_BUILDER_JWT_SECRET: str = ""
