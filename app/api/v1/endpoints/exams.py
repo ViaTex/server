@@ -279,9 +279,17 @@ async def generate_section_b_question(
         question_payload, answer_key = generate_section_b_questions(student=student)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    answer_map = answer_key.get("mcq_answers") if isinstance(answer_key.get("mcq_answers"), dict) else {}
     question_schema = {
         "prompt_text": "",
-        "mcqs": question_payload.get("mcqs", []),
+        "mcqs": [
+            {
+                **item,
+                "correct_option": answer_map.get(item.get("id")),
+            }
+            for item in question_payload.get("mcqs", [])
+            if isinstance(item, dict)
+        ],
         "long_questions": question_payload.get("long_questions", []),
         "topics": question_payload.get("topics", []),
     }
@@ -298,6 +306,7 @@ async def generate_section_b_question(
                 "long_answers": {},
             }
         ),
+        transcript=json.dumps(answer_key),
     )
 
     return {
@@ -368,22 +377,53 @@ async def submit_section_b_response(
         except json.JSONDecodeError:
             answer_key = {}
 
+    if not answer_key:
+        derived = {}
+        mcqs = question_payload.get("mcqs") if isinstance(question_payload.get("mcqs"), list) else []
+        for item in mcqs:
+            if not isinstance(item, dict):
+                continue
+            mcq_id = item.get("id")
+            correct = item.get("correct_option")
+            if mcq_id and correct:
+                derived[mcq_id] = correct
+        if derived:
+            answer_key = {"mcq_answers": derived}
+
+    if answer_key and not response.transcript:
+        response.transcript = json.dumps(answer_key)
+        db.add(response)
+        db.commit()
+        db.refresh(response)
+
     mcq_answer_map = {item.get("id"): item.get("selected_option") for item in mcq_answers if isinstance(item, dict)}
     long_answer_map = {item.get("id"): item.get("answer") for item in long_answers if isinstance(item, dict)}
 
     expected_mcq = answer_key.get("mcq_answers") if isinstance(answer_key.get("mcq_answers"), dict) else {}
     expected_long = question_payload.get("long_questions") if isinstance(question_payload.get("long_questions"), list) else []
+    mcq_ids = [
+        item.get("id")
+        for item in question_payload.get("mcqs", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
 
-    if len(expected_mcq) != 15 or len(expected_long) != 5:
+    if len(mcq_ids) != 15 or len(expected_long) != 5:
         raise HTTPException(status_code=500, detail="Section B question set is incomplete")
 
-    missing_mcq = [qid for qid in expected_mcq.keys() if not mcq_answer_map.get(qid)]
+    if expected_mcq:
+        missing_mcq = [qid for qid in expected_mcq.keys() if not mcq_answer_map.get(qid)]
+    else:
+        missing_mcq = [qid for qid in mcq_ids if not mcq_answer_map.get(qid)]
+
     missing_long = [item.get("id") for item in expected_long if not long_answer_map.get(item.get("id"))]
     if missing_mcq or missing_long:
         raise HTTPException(status_code=400, detail="All Section B answers must be provided")
 
-    correct_count = sum(1 for qid, correct in expected_mcq.items() if mcq_answer_map.get(qid) == correct)
-    mcq_score = (correct_count / len(expected_mcq)) * 10 if expected_mcq else 1.0
+    if expected_mcq:
+        correct_count = sum(1 for qid, correct in expected_mcq.items() if mcq_answer_map.get(qid) == correct)
+        mcq_score = (correct_count / len(expected_mcq)) * 10 if expected_mcq else 1.0
+    else:
+        mcq_score = 5.0
 
     long_scores = []
     for item in expected_long:
