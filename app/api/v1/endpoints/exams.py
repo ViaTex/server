@@ -306,7 +306,7 @@ async def generate_section_b_question(
                 "long_answers": {},
             }
         ),
-        transcript=json.dumps(answer_key),
+        transcript=None,
     )
 
     return {
@@ -371,11 +371,6 @@ async def submit_section_b_response(
         raise HTTPException(status_code=500, detail="Stored Section B questions are invalid") from exc
 
     answer_key = {}
-    if response.transcript:
-        try:
-            answer_key = json.loads(response.transcript)
-        except json.JSONDecodeError:
-            answer_key = {}
 
     if not answer_key:
         derived = {}
@@ -389,12 +384,6 @@ async def submit_section_b_response(
                 derived[mcq_id] = correct
         if derived:
             answer_key = {"mcq_answers": derived}
-
-    if answer_key and not response.transcript:
-        response.transcript = json.dumps(answer_key)
-        db.add(response)
-        db.commit()
-        db.refresh(response)
 
     mcq_answer_map = {item.get("id"): item.get("selected_option") for item in mcq_answers if isinstance(item, dict)}
     long_answer_map = {item.get("id"): item.get("answer") for item in long_answers if isinstance(item, dict)}
