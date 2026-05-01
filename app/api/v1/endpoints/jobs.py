@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.job_application import ApplicationStatus, JobApplication
 from app.models.job import Job, JobStatus, JobType
+from app.models.user import Student
+from app.schemas.application import JobApplicationCreateRequest, JobApplicationResponse
 from app.schemas.job import JobCreateRequest, JobResponse
 
 router = APIRouter()
+
+
+def _is_missing_job_applications_table(error: Exception) -> bool:
+    if not isinstance(error, ProgrammingError):
+        return False
+    message = str(getattr(error, "orig", error)).lower()
+    return 'relation "job_applications" does not exist' in message
 
 
 def _serialize_job(job: Job) -> dict:
@@ -97,6 +109,8 @@ async def create_job(
         **payload_data,
         job_type=JobType(payload.job_type),
         status=JobStatus.ACTIVE,
+        is_public=True,
+        published_at=datetime.now(timezone.utc),
     )
 
     if current_user["user_type"] == "corporate":
@@ -108,6 +122,136 @@ async def create_job(
     db.commit()
     db.refresh(job)
     return _serialize_job(job)
+
+
+@router.post("/{job_id}/apply", response_model=JobApplicationResponse, status_code=status.HTTP_201_CREATED)
+async def apply_to_job(
+    job_id: UUID,
+    payload: JobApplicationCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user["user_type"] != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can apply to jobs")
+
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not job.is_public or not job.can_apply:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This job is not accepting applications")
+
+    student = db.query(Student).filter(Student.id == UUID(str(current_user["user_id"]))).first()
+    if not student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
+    if not student.resume_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload your resume before applying")
+
+    try:
+        existing_application = (
+            db.query(JobApplication)
+            .filter(JobApplication.job_id == job.id, JobApplication.student_id == student.id)
+            .first()
+        )
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Job applications are not ready yet. Run the latest database migration and try again.",
+            )
+        raise
+    if existing_application:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You have already applied to this job")
+
+    application = JobApplication(
+        job_id=job.id,
+        student_id=student.id,
+        corporate_id=job.corporate_id,
+        college_id=job.college_id,
+        status=ApplicationStatus.APPLIED,
+        expected_salary=payload.expected_salary,
+        cover_letter=payload.cover_letter,
+        resume_url=student.resume_url,
+    )
+    job.current_applications = (job.current_applications or 0) + 1
+    job.applications_count = (job.applications_count or 0) + 1
+
+    try:
+        db.add(application)
+        db.commit()
+        db.refresh(application)
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Job applications are not ready yet. Run the latest database migration and try again.",
+            )
+        raise
+
+    return JobApplicationResponse(
+        id=application.id,
+        job_id=application.job_id,
+        student_id=application.student_id,
+        corporate_id=application.corporate_id,
+        college_id=application.college_id,
+        status=application.status.value if hasattr(application.status, "value") else str(application.status),
+        expected_salary=application.expected_salary,
+        cover_letter=application.cover_letter,
+        resume_url=application.resume_url,
+        created_at=application.created_at,
+        updated_at=application.updated_at,
+        student_name=student.name,
+        student_email=student.email,
+        student_phone=student.phone,
+        job_title=job.title,
+        company_name=job.company_name,
+    )
+
+
+@router.get("/applications/me", response_model=list[JobApplicationResponse])
+async def list_my_applications(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user["user_type"] != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can view their applications")
+
+    try:
+        applications = (
+            db.query(JobApplication, Job)
+            .join(Job, Job.id == JobApplication.job_id)
+            .filter(JobApplication.student_id == UUID(str(current_user["user_id"])))
+            .order_by(JobApplication.created_at.desc())
+            .all()
+        )
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            return []
+        raise
+
+    response: list[JobApplicationResponse] = []
+    for application, job in applications:
+        response.append(
+            JobApplicationResponse(
+                id=application.id,
+                job_id=application.job_id,
+                student_id=application.student_id,
+                corporate_id=application.corporate_id,
+                college_id=application.college_id,
+                status=application.status.value if hasattr(application.status, "value") else str(application.status),
+                expected_salary=application.expected_salary,
+                cover_letter=application.cover_letter,
+                resume_url=application.resume_url,
+                created_at=application.created_at,
+                updated_at=application.updated_at,
+                job_title=job.title,
+                company_name=job.company_name,
+            )
+        )
+
+    return response
 
 
 @router.get("", response_model=list[JobResponse])
