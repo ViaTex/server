@@ -217,13 +217,15 @@ def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
         "\"long_questions\":[{" \
         "\"id\":\"l1\",\"question\":\"...\"}]}" \
         " with exactly 15 MCQs and 5 long questions. "
+        "Each MCQ must include correct_option and it must be one of the options. "
         "Do not include markdown or explanations."
     )
 
     user_prompt = (
         f"{profile_summary}\n"
         "Generate Section B fundamentals: 15 MCQs with 4 options each, "
-        "and 5 long descriptive questions. Ensure unique ids q1-q15 and l1-l5."
+        "and 5 long descriptive questions. Ensure unique ids q1-q15 and l1-l5. "
+        "Return options as plain strings and include correct_option for every MCQ."
     )
 
     last_error = ""

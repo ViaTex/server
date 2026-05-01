@@ -5,11 +5,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import structlog
 
-from app.models.user import Student, Corporate, College, Admin, UserSession, UserStatus, SessionUserType
+from app.models.user import Student, Mentor, Corporate, College, Admin, UserSession, UserStatus, SessionUserType
 from app.models.user import EmailOTP
 from app.core.security import SecurityManager
 from app.schemas.auth import (
     StudentRegisterRequest,
+    MentorRegisterRequest,
     CorporateRegisterRequest,
     CollegeRegisterRequest
 )
@@ -27,6 +28,8 @@ class AuthService:
             return SessionUserType.COLLEGE
         if normalized_user_type == "student":
             return SessionUserType.STUDENT
+        if normalized_user_type == "mentor":
+            return SessionUserType.MENTOR
         if normalized_user_type == "corporate":
             return SessionUserType.CORPORATE
         if normalized_user_type == "admin":
@@ -35,6 +38,7 @@ class AuthService:
 
     def _is_email_taken(self, email: str) -> bool:
         if self.db.query(Student).filter(Student.email == email).first(): return True
+        if self.db.query(Mentor).filter(Mentor.email == email).first(): return True
         if self.db.query(Corporate).filter(Corporate.email == email).first(): return True
         if self.db.query(College).filter(College.email == email).first(): return True
         if self.db.query(Admin).filter(Admin.email == email).first(): return True
@@ -45,6 +49,10 @@ class AuthService:
         user = self.db.query(Student).filter(Student.email == email).first()
         if user:
             return user, "student"
+
+        user = self.db.query(Mentor).filter(Mentor.email == email).first()
+        if user:
+            return user, "mentor"
         
         user = self.db.query(Corporate).filter(Corporate.email == email).first()
         if user:
@@ -112,6 +120,10 @@ class AuthService:
     async def verify_otp_and_register_corporate(self, code: str, request: CorporateRegisterRequest) -> Corporate:
         self._consume_email_otp(request.email, code)
         return await self.register_corporate(request)
+
+    async def verify_otp_and_register_mentor(self, code: str, request: MentorRegisterRequest) -> Mentor:
+        self._consume_email_otp(request.email, code)
+        return await self.register_mentor(request)
 
     async def verify_otp_and_register_college(self, code: str, request: CollegeRegisterRequest) -> College:
         self._consume_email_otp(request.email, code)
@@ -188,6 +200,32 @@ class AuthService:
             logger.error("Corporate registration failed", error=str(e), email=request.email)
             raise
 
+    async def register_mentor(self, request: MentorRegisterRequest) -> Mentor:
+        try:
+            if self._is_email_taken(request.email):
+                raise ValueError("Email already registered")
+
+            mentor = Mentor(
+                id=uuid.uuid4(),
+                user_id=uuid.UUID(str(request.user_id)) if request.user_id else uuid.uuid4(),
+                email=request.email,
+                password_hash=SecurityManager.get_password_hash(request.password),
+                name=request.name,
+                phone=request.phone,
+                current_role=request.current_role,
+                expertise_areas=request.expertise_areas or [],
+                experience_years=request.experience_years,
+                motivation=request.motivation,
+            )
+            self.db.add(mentor)
+            self.db.commit()
+            self.db.refresh(mentor)
+            return mentor
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Mentor registration failed", error=str(e), email=request.email)
+            raise
+
     async def register_college(self, request: CollegeRegisterRequest) -> College:
         try:
             if self._is_email_taken(request.email):
@@ -216,6 +254,8 @@ class AuthService:
             if user_type:
                 if user_type == "student":
                     user = self.db.query(Student).filter(Student.email == email).first()
+                elif user_type == "mentor":
+                    user = self.db.query(Mentor).filter(Mentor.email == email).first()
                 elif user_type == "corporate":
                     user = self.db.query(Corporate).filter(Corporate.email == email).first()
                 elif user_type == "college":

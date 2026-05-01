@@ -12,6 +12,7 @@ from app.core.database import Base
 
 class UserType(str, enum.Enum):
     STUDENT = "student"
+    MENTOR = "mentor"
     CORPORATE = "corporate"
     COLLEGE = "college"
     ADMIN = "admin"
@@ -19,9 +20,27 @@ class UserType(str, enum.Enum):
 
 class SessionUserType(str, enum.Enum):
     STUDENT = "STUDENT"
+    MENTOR = "MENTOR"
     CORPORATE = "CORPORATE"
     COLLEGE = "COLLEGE"
     ADMIN = "ADMIN"
+
+
+class SkillEvaluationStatus(str, enum.Enum):
+    SUBMITTED = "submitted"
+    ASSIGNED = "assigned"
+    UNDER_REVIEW = "under_review"
+    VIVA_SCHEDULED = "viva_scheduled"
+    VIVA_COMPLETED = "viva_completed"
+    EVALUATED = "evaluated"
+
+
+class SkillEvaluationVerdict(str, enum.Enum):
+    EXCELLENT = "excellent"
+    VERY_GOOD = "very_good"
+    GOOD = "good"
+    NEEDS_IMPROVEMENT = "needs_improvement"
+    DID_NOT_PASS = "did_not_pass"
 
 class Gender(str, enum.Enum):
     MALE = "male"
@@ -90,12 +109,37 @@ class Student(BaseUser):
 
     current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
     badge = Column(String(20), nullable=True)
+    skill_profile = Column(JSONB, nullable=True)
     
     college_id = Column(String(255), nullable=True)
     exam_sessions = relationship("ExamSession", back_populates="student", cascade="all, delete-orphan")
+    evaluations_received = relationship(
+        "SkillEvaluation",
+        back_populates="student",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     profile_history_entries = relationship(
         "UserProfileHistory",
         back_populates="student",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class Mentor(BaseUser):
+    __tablename__ = "mentors"
+
+    user_id = Column(UUID(as_uuid=True), nullable=False, unique=True, index=True)
+    current_role = Column(String(255), nullable=True)
+    expertise_areas = Column(JSONB, nullable=False, default=list)
+    experience_years = Column(Integer, nullable=True)
+    motivation = Column(Text, nullable=True)
+    average_rating = Column(Numeric(3, 2), nullable=False, server_default="0.0")
+
+    skill_evaluations = relationship(
+        "SkillEvaluation",
+        back_populates="mentor",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
@@ -141,6 +185,38 @@ class College(BaseUser):
 class Admin(BaseUser):
     __tablename__ = "admins"
     role = Column(String(100), default="admin")
+
+
+class SkillEvaluation(Base):
+    __tablename__ = "skill_evaluations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mentor_id = Column(UUID(as_uuid=True), ForeignKey("mentors.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
+    status = Column(Enum(SkillEvaluationStatus), nullable=False, default=SkillEvaluationStatus.SUBMITTED)
+    proposed_slots = Column(JSONB, nullable=False, default=list)
+    confirmed_slot = Column(DateTime(timezone=True), nullable=True)
+    viva_meeting_link = Column(String(1000), nullable=True)
+
+    score_technical = Column(Integer, nullable=True)
+    score_practical = Column(Integer, nullable=True)
+    score_communication = Column(Integer, nullable=True)
+    score_originality = Column(Integer, nullable=True)
+    total_score = Column(Integer, nullable=True)
+    verdict = Column(Enum(SkillEvaluationVerdict), nullable=True)
+    feedback_strengths = Column(Text, nullable=True)
+    feedback_improvements = Column(Text, nullable=True)
+
+    student_rating_of_mentor = Column(Integer, nullable=True)
+    student_technical_issues = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    mentor = relationship("Mentor", back_populates="skill_evaluations")
+    student = relationship("Student", back_populates="evaluations_received")
 
 
 class UserSession(Base):

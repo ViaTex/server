@@ -1,10 +1,16 @@
 import uuid
 
-from app.ai.evaluator import analyze_transcript, download_media, transcribe_media
+from app.ai.evaluate import evaluate_section_a_transcript
+from app.ai.evaluator import download_media, transcribe_media
 from app.ai.utils.logger import ai_error, ai_log
 from app.core.database import SessionLocal
 from app.models.exam_response import ExamResponse
+from app.models.exam_session import ExamSession
+from app.services.exam_session_service import set_current_step
 from app.services.exam_response_service import update_response_ai_analysis
+
+
+SECTION_A_TOPICS = ["Confidence", "Communication", "Professionalism", "Clarity"]
 
 
 def process_section_a_intro_ai(response_id: str, video_url: str) -> None:
@@ -20,7 +26,7 @@ def process_section_a_intro_ai(response_id: str, video_url: str) -> None:
 
         media_bytes = download_media(video_url)
         transcript = transcribe_media(media_bytes, filename="section_a_intro.mp4")
-        analysis = analyze_transcript(transcript)
+        analysis = evaluate_section_a_transcript(transcript, SECTION_A_TOPICS)
 
         update_response_ai_analysis(
             db,
@@ -28,6 +34,9 @@ def process_section_a_intro_ai(response_id: str, video_url: str) -> None:
             transcript=transcript,
             ai_analysis=analysis,
         )
+        session = db.query(ExamSession).filter(ExamSession.id == response.session_id).first()
+        if session and session.current_step == "PENDING_MENTOR_REVIEW":
+            set_current_step(db, session=session, next_step="SECTION_B")
         ai_log(f"Section A AI evaluation completed for response_id={response_id}")
     except Exception as exc:
         ai_error(f"Section A AI evaluation failed for response_id={response_id}: {exc}")
