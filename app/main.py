@@ -45,3 +45,28 @@ def check_dependencies() -> None:
 @app.get("/")
 def root():
     return {"message": "Welcome to DishaSetu API"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    checks = {"database": "ok", "redis": "ok"}
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        checks["database"] = str(exc)
+
+    try:
+        redis_client = get_redis_client()
+        redis_client.ping()
+    except Exception as exc:
+        checks["redis"] = str(exc)
+
+    status = "ok" if all(value == "ok" for value in checks.values()) else "degraded"
+    return {"status": status, "checks": checks}

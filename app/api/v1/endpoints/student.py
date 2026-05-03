@@ -316,8 +316,36 @@ from app.ai.services.resume_analyzer import get_ats_score_from_llm
 from app.models.resume_status import ResumeStatus
 from app.services.resume_status_service import ResumeStatusService
 import urllib.request
+from urllib.parse import urlparse
 import tempfile
 import pdfplumber
+from docx import Document
+
+
+def _extract_resume_text(file_path: str, file_type: str) -> str:
+    if file_type == "pdf":
+        with pdfplumber.open(file_path) as pdf:
+            return "\n".join((page.extract_text() or "") for page in pdf.pages)
+
+    if file_type == "docx":
+        document = Document(file_path)
+        return "\n".join(paragraph.text for paragraph in document.paragraphs)
+
+    raise HTTPException(400, "Unsupported resume format for ATS analysis. Please upload a PDF or DOCX resume.")
+
+
+def _resume_file_type(resume_url: str, content_type: str | None = None) -> str:
+    extension = os.path.splitext(urlparse(resume_url).path)[1].lower()
+    normalized_content_type = (content_type or "").lower()
+
+    if extension == ".pdf" or "pdf" in normalized_content_type:
+        return "pdf"
+    if extension == ".docx" or "wordprocessingml.document" in normalized_content_type:
+        return "docx"
+    if extension == ".doc":
+        raise HTTPException(400, "Legacy DOC files are not supported for ATS analysis. Please upload PDF or DOCX.")
+
+    return "pdf"
 
 @router.get("/resume/status")
 async def get_resume_status(
@@ -392,12 +420,17 @@ async def get_ats_score(
         raise HTTPException(400, "No resume uploaded. Please upload a resume first.")
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            urllib.request.urlretrieve(student.resume_url, tmp.name)
-            resume_text = ""
-            with pdfplumber.open(tmp.name) as pdf:
-                for page in pdf.pages:
-                    resume_text += page.extract_text() + "\n"
+        tmp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp_path = tmp.name
+
+            _, headers = urllib.request.urlretrieve(student.resume_url, tmp_path)
+            file_type = _resume_file_type(student.resume_url, headers.get_content_type() if headers else None)
+            resume_text = _extract_resume_text(tmp_path, file_type)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
         
         if not resume_text or len(resume_text.strip()) < 50:
             raise HTTPException(400, "Could not extract text from resume")
@@ -408,7 +441,8 @@ async def get_ats_score(
         ResumeStatusService.update_ats_score(db, student.id, ats_result)
         
         return ats_result
-        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Failed to get ATS score: {str(e)}")
 
