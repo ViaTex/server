@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -23,6 +24,33 @@ def _is_missing_job_applications_table(error: Exception) -> bool:
         return False
     message = str(getattr(error, "orig", error)).lower()
     return 'relation "job_applications" does not exist' in message
+
+
+def _has_offer_letter_columns(db: Session) -> bool:
+    inspector = sqlalchemy_inspect(db.bind)
+    if not inspector.has_table("job_applications"):
+        return False
+    columns = {column["name"] for column in inspector.get_columns("job_applications")}
+    return {"offer_letter", "offer_letter_sent_at"}.issubset(columns)
+
+
+def _application_load_options(include_offer_letter: bool):
+    columns = [
+        JobApplication.id,
+        JobApplication.job_id,
+        JobApplication.student_id,
+        JobApplication.corporate_id,
+        JobApplication.college_id,
+        JobApplication.status,
+        JobApplication.expected_salary,
+        JobApplication.cover_letter,
+        JobApplication.resume_url,
+        JobApplication.created_at,
+        JobApplication.updated_at,
+    ]
+    if include_offer_letter:
+        columns.extend([JobApplication.offer_letter, JobApplication.offer_letter_sent_at])
+    return load_only(*columns)
 
 
 def _serialize_job(job: Job) -> dict:
@@ -137,7 +165,7 @@ async def apply_to_job(
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if not job.is_public or not job.can_apply:
+    if not job.can_apply:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This job is not accepting applications")
 
     student = db.query(Student).filter(Student.id == UUID(str(current_user["user_id"]))).first()
@@ -189,6 +217,8 @@ async def apply_to_job(
             )
         raise
 
+    has_offer_letter_columns = _has_offer_letter_columns(db)
+
     return JobApplicationResponse(
         id=application.id,
         job_id=application.job_id,
@@ -199,6 +229,8 @@ async def apply_to_job(
         expected_salary=application.expected_salary,
         cover_letter=application.cover_letter,
         resume_url=application.resume_url,
+        offer_letter=application.offer_letter if has_offer_letter_columns else None,
+        offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
         created_at=application.created_at,
         updated_at=application.updated_at,
         student_name=student.name,
@@ -218,8 +250,10 @@ async def list_my_applications(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can view their applications")
 
     try:
+        has_offer_letter_columns = _has_offer_letter_columns(db)
         applications = (
             db.query(JobApplication, Job)
+            .options(_application_load_options(has_offer_letter_columns))
             .join(Job, Job.id == JobApplication.job_id)
             .filter(JobApplication.student_id == UUID(str(current_user["user_id"])))
             .order_by(JobApplication.created_at.desc())
@@ -244,6 +278,8 @@ async def list_my_applications(
                 expected_salary=application.expected_salary,
                 cover_letter=application.cover_letter,
                 resume_url=application.resume_url,
+                offer_letter=application.offer_letter if has_offer_letter_columns else None,
+                offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
                 created_at=application.created_at,
                 updated_at=application.updated_at,
                 job_title=job.title,
@@ -263,7 +299,7 @@ async def list_jobs(
     query = db.query(Job).order_by(Job.created_at.desc())
 
     if current_user["user_type"] == "student":
-        query = query.filter(Job.is_public == True)
+        query = query.filter(Job.status == JobStatus.ACTIVE)
 
     if mine:
         if current_user["user_type"] not in {"corporate", "college"}:

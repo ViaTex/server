@@ -42,6 +42,8 @@ class JobApplication(Base):
     expected_salary = Column(Numeric(12, 2), nullable=True)
     cover_letter = Column(Text, nullable=True)
     resume_url = Column(String(1000), nullable=False)
+    offer_letter = Column(Text, nullable=True)
+    offer_letter_sent_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
