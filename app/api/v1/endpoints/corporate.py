@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.security import get_current_corporate
 from app.models.job import Job
 from app.models.job_application import ApplicationStatus, JobApplication
+from app.models.resume_status import ResumeStatus
 from app.models.user import Corporate
 from app.models.user import Student
 from app.schemas.application import JobApplicationResponse, JobApplicationUpdateRequest
@@ -53,6 +54,42 @@ def _application_load_options(include_offer_letter: bool):
     if include_offer_letter:
         columns.extend([JobApplication.offer_letter, JobApplication.offer_letter_sent_at])
     return load_only(*columns)
+
+
+def _application_response(
+    application: JobApplication,
+    student: Student,
+    job: Job,
+    corporate: Corporate,
+    has_offer_letter_columns: bool,
+    resume_status: ResumeStatus | None = None,
+) -> JobApplicationResponse:
+    return JobApplicationResponse(
+        id=application.id,
+        job_id=application.job_id,
+        student_id=application.student_id,
+        corporate_id=application.corporate_id,
+        college_id=application.college_id,
+        status=application.status.value if hasattr(application.status, "value") else str(application.status),
+        expected_salary=application.expected_salary,
+        cover_letter=application.cover_letter,
+        resume_url=application.resume_url,
+        offer_letter=application.offer_letter if has_offer_letter_columns else None,
+        offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
+        created_at=application.created_at,
+        updated_at=application.updated_at,
+        student_name=student.name,
+        student_email=student.email,
+        student_phone=student.phone,
+        student_technical_skills=student.technical_skills,
+        student_des_score=student.current_des_score,
+        student_ats_score=resume_status.ats_score if resume_status else None,
+        job_title=job.title,
+        company_name=job.company_name or corporate.company_name,
+        salary_min=job.salary_min,
+        salary_max=job.salary_max,
+        salary_currency=job.salary_currency,
+    )
 
 
 @router.get("/profile", response_model=CorporateProfileResponse)
@@ -133,10 +170,11 @@ async def list_corporate_applicants(
 
     try:
         applications = (
-            db.query(JobApplication, Student, Job)
+            db.query(JobApplication, Student, Job, ResumeStatus)
             .options(_application_load_options(has_offer_letter_columns))
             .join(Student, Student.id == JobApplication.student_id)
             .join(Job, Job.id == JobApplication.job_id)
+            .outerjoin(ResumeStatus, ResumeStatus.student_id == Student.id)
             .filter(JobApplication.corporate_id == corporate_id)
             .order_by(JobApplication.created_at.desc())
             .all()
@@ -148,32 +186,8 @@ async def list_corporate_applicants(
         raise
 
     response: list[JobApplicationResponse] = []
-    for application, student, job in applications:
-        response.append(
-            JobApplicationResponse(
-                id=application.id,
-                job_id=application.job_id,
-                student_id=application.student_id,
-                corporate_id=application.corporate_id,
-                college_id=application.college_id,
-                status=application.status.value if hasattr(application.status, "value") else str(application.status),
-                expected_salary=application.expected_salary,
-                cover_letter=application.cover_letter,
-                resume_url=application.resume_url,
-                offer_letter=application.offer_letter if has_offer_letter_columns else None,
-                offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
-                created_at=application.created_at,
-                updated_at=application.updated_at,
-                student_name=student.name,
-                student_email=student.email,
-                student_phone=student.phone,
-                job_title=job.title,
-                company_name=job.company_name or corporate.company_name,
-                salary_min=job.salary_min,
-                salary_max=job.salary_max,
-                salary_currency=job.salary_currency,
-            )
-        )
+    for application, student, job, resume_status in applications:
+        response.append(_application_response(application, student, job, corporate, has_offer_letter_columns, resume_status))
 
     return response
 
@@ -194,10 +208,11 @@ async def update_corporate_applicant(
 
     try:
         application_row = (
-            db.query(JobApplication, Student, Job)
+            db.query(JobApplication, Student, Job, ResumeStatus)
             .options(_application_load_options(has_offer_letter_columns))
             .join(Student, Student.id == JobApplication.student_id)
             .join(Job, Job.id == JobApplication.job_id)
+            .outerjoin(ResumeStatus, ResumeStatus.student_id == Student.id)
             .filter(JobApplication.id == application_id, JobApplication.corporate_id == corporate_id)
             .first()
         )
@@ -210,7 +225,7 @@ async def update_corporate_applicant(
     if not application_row:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    application, student, job = application_row
+    application, student, job, resume_status = application_row
 
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
@@ -235,29 +250,44 @@ async def update_corporate_applicant(
     db.commit()
     db.refresh(application)
 
-    return JobApplicationResponse(
-        id=application.id,
-        job_id=application.job_id,
-        student_id=application.student_id,
-        corporate_id=application.corporate_id,
-        college_id=application.college_id,
-        status=application.status.value if hasattr(application.status, "value") else str(application.status),
-        expected_salary=application.expected_salary,
-        cover_letter=application.cover_letter,
-        resume_url=application.resume_url,
-        offer_letter=application.offer_letter if has_offer_letter_columns else None,
-        offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
-        created_at=application.created_at,
-        updated_at=application.updated_at,
-        student_name=student.name,
-        student_email=student.email,
-        student_phone=student.phone,
-        job_title=job.title,
-        company_name=job.company_name or corporate.company_name,
-        salary_min=job.salary_min,
-        salary_max=job.salary_max,
-        salary_currency=job.salary_currency,
-    )
+    return _application_response(application, student, job, corporate, has_offer_letter_columns, resume_status)
+
+
+@router.delete("/applicants/{application_id}")
+async def delete_corporate_applicant(
+    application_id: UUID,
+    current_user: dict = Depends(get_current_corporate),
+    db: Session = Depends(get_db),
+):
+    corporate_id = UUID(str(current_user["user_id"]))
+    corporate = db.query(Corporate).filter(Corporate.id == corporate_id).first()
+    if not corporate:
+        raise HTTPException(status_code=404, detail="Corporate profile not found")
+
+    try:
+        application = (
+            db.query(JobApplication)
+            .filter(JobApplication.id == application_id, JobApplication.corporate_id == corporate_id)
+            .first()
+        )
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            raise HTTPException(status_code=503, detail="Job applications are not ready yet.")
+        raise
+
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    job = db.query(Job).filter(Job.id == application.job_id).first()
+    if job:
+        job.current_applications = max((job.current_applications or 0) - 1, 0)
+        job.applications_count = max((job.applications_count or 0) - 1, 0)
+
+    db.delete(application)
+    db.commit()
+
+    return {"message": "Application removed", "id": str(application_id)}
 
 
 @router.post("/applicants/{application_id}/offer-letter", response_model=JobApplicationResponse)
@@ -288,10 +318,11 @@ async def upload_offer_letter(
 
     try:
         application_row = (
-            db.query(JobApplication, Student, Job)
+            db.query(JobApplication, Student, Job, ResumeStatus)
             .options(_application_load_options(True))
             .join(Student, Student.id == JobApplication.student_id)
             .join(Job, Job.id == JobApplication.job_id)
+            .outerjoin(ResumeStatus, ResumeStatus.student_id == Student.id)
             .filter(JobApplication.id == application_id, JobApplication.corporate_id == corporate_id)
             .first()
         )
@@ -304,7 +335,7 @@ async def upload_offer_letter(
     if not application_row:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    application, student, job = application_row
+    application, student, job, resume_status = application_row
 
     try:
         offer_letter_url = CloudinaryService.upload_media_bytes(
@@ -321,26 +352,4 @@ async def upload_offer_letter(
     db.commit()
     db.refresh(application)
 
-    return JobApplicationResponse(
-        id=application.id,
-        job_id=application.job_id,
-        student_id=application.student_id,
-        corporate_id=application.corporate_id,
-        college_id=application.college_id,
-        status=application.status.value if hasattr(application.status, "value") else str(application.status),
-        expected_salary=application.expected_salary,
-        cover_letter=application.cover_letter,
-        resume_url=application.resume_url,
-        offer_letter=application.offer_letter,
-        offer_letter_sent_at=application.offer_letter_sent_at,
-        created_at=application.created_at,
-        updated_at=application.updated_at,
-        student_name=student.name,
-        student_email=student.email,
-        student_phone=student.phone,
-        job_title=job.title,
-        company_name=job.company_name or corporate.company_name,
-        salary_min=job.salary_min,
-        salary_max=job.salary_max,
-        salary_currency=job.salary_currency,
-    )
+    return _application_response(application, student, job, corporate, True, resume_status)

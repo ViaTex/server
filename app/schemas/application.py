@@ -36,6 +36,9 @@ class JobApplicationResponse(BaseModel):
     student_name: Optional[str] = None
     student_email: Optional[str] = None
     student_phone: Optional[str] = None
+    student_technical_skills: Optional[str] = None
+    student_des_score: Optional[Decimal] = None
+    student_ats_score: Optional[int] = None
     job_title: Optional[str] = None
     company_name: Optional[str] = None
     salary_min: Optional[Decimal] = None
