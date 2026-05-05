@@ -109,6 +109,7 @@ class Student(BaseUser):
 
     current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
     badge = Column(String(20), nullable=True)
+    skill_profile = Column(JSONB, nullable=True)
     
     college_id = Column(String(255), nullable=True)
     exam_sessions = relationship("ExamSession", back_populates="student", cascade="all, delete-orphan")
