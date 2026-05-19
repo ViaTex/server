@@ -1,16 +1,57 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy import inspect as sqlalchemy_inspect
+from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import Session, load_only
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.job_application import ApplicationStatus, JobApplication
 from app.models.job import Job, JobStatus, JobType
+from app.models.resume_status import ResumeStatus
+from app.models.user import Student
+from app.schemas.application import JobApplicationCreateRequest, JobApplicationResponse
 from app.schemas.job import JobCreateRequest, JobResponse
 
 router = APIRouter()
+
+
+def _is_missing_job_applications_table(error: Exception) -> bool:
+    if not isinstance(error, ProgrammingError):
+        return False
+    message = str(getattr(error, "orig", error)).lower()
+    return 'relation "job_applications" does not exist' in message
+
+
+def _has_offer_letter_columns(db: Session) -> bool:
+    inspector = sqlalchemy_inspect(db.bind)
+    if not inspector.has_table("job_applications"):
+        return False
+    columns = {column["name"] for column in inspector.get_columns("job_applications")}
+    return {"offer_letter", "offer_letter_sent_at"}.issubset(columns)
+
+
+def _application_load_options(include_offer_letter: bool):
+    columns = [
+        JobApplication.id,
+        JobApplication.job_id,
+        JobApplication.student_id,
+        JobApplication.corporate_id,
+        JobApplication.college_id,
+        JobApplication.status,
+        JobApplication.expected_salary,
+        JobApplication.cover_letter,
+        JobApplication.resume_url,
+        JobApplication.created_at,
+        JobApplication.updated_at,
+    ]
+    if include_offer_letter:
+        columns.extend([JobApplication.offer_letter, JobApplication.offer_letter_sent_at])
+    return load_only(*columns)
 
 
 def _serialize_job(job: Job) -> dict:
@@ -78,6 +119,59 @@ def _serialize_job(job: Job) -> dict:
     }
 
 
+def _has_non_empty_value(value) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return len(value) > 0
+    return bool(value)
+
+
+def _has_education_entries(value) -> bool:
+    if not isinstance(value, list):
+        return False
+    return any(bool(entry.get("institution")) and bool(entry.get("level")) for entry in value if isinstance(entry, dict))
+
+
+def _calculate_profile_strength(student: Student) -> int:
+    checks = [
+        _has_non_empty_value(student.name) and _has_non_empty_value(student.phone) and _has_non_empty_value(student.bio),
+        _has_education_entries(student.education),
+        _has_non_empty_value(student.technical_skills),
+        _has_non_empty_value(student.soft_skills),
+        _has_non_empty_value(student.preferred_industry) and _has_non_empty_value(student.job_roles_of_interest),
+        _has_non_empty_value(student.gender) and _has_non_empty_value(student.country) and _has_non_empty_value(student.state) and _has_non_empty_value(student.city),
+        _has_non_empty_value(student.location_preferences) and _has_non_empty_value(student.language_proficiency),
+        _has_non_empty_value(student.linkedin_profile) or _has_non_empty_value(student.github_profile) or _has_non_empty_value(student.personal_website),
+        _has_non_empty_value(student.resume_url),
+    ]
+    return round((sum(1 for check in checks if check) / len(checks)) * 100)
+
+
+def _validate_student_application_eligibility(db: Session, student: Student) -> None:
+    resume_status = db.query(ResumeStatus).filter(ResumeStatus.student_id == student.id).first()
+    has_resume = bool(student.resume_url or resume_status and (resume_status.has_resume or resume_status.resume_uploaded))
+    ats_score = resume_status.ats_score if resume_status else None
+    des_score = float(student.current_des_score or 0)
+    profile_strength = _calculate_profile_strength(student)
+
+    missing_requirements: list[str] = []
+    if not has_resume:
+        missing_requirements.append("upload your resume")
+    if ats_score is None or ats_score <= 70:
+        missing_requirements.append("resume ATS score must be greater than 70")
+    if des_score < 50:
+        missing_requirements.append("DES/exam score must be at least 50")
+    if profile_strength < 90:
+        missing_requirements.append("profile completion must be at least 90%")
+
+    if missing_requirements:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"You are not eligible to apply yet: {', '.join(missing_requirements)}.",
+        )
+
+
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(
     payload: JobCreateRequest,
@@ -97,6 +191,8 @@ async def create_job(
         **payload_data,
         job_type=JobType(payload.job_type),
         status=JobStatus.ACTIVE,
+        is_public=True,
+        published_at=datetime.now(timezone.utc),
     )
 
     if current_user["user_type"] == "corporate":
@@ -110,6 +206,145 @@ async def create_job(
     return _serialize_job(job)
 
 
+@router.post("/{job_id}/apply", response_model=JobApplicationResponse, status_code=status.HTTP_201_CREATED)
+async def apply_to_job(
+    job_id: UUID,
+    payload: JobApplicationCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user["user_type"] != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can apply to jobs")
+
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if not job.can_apply:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This job is not accepting applications")
+
+    student = db.query(Student).filter(Student.id == UUID(str(current_user["user_id"]))).first()
+    if not student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
+    if not student.resume_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload your resume before applying")
+    _validate_student_application_eligibility(db, student)
+
+    try:
+        existing_application = (
+            db.query(JobApplication)
+            .filter(JobApplication.job_id == job.id, JobApplication.student_id == student.id)
+            .first()
+        )
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Job applications are not ready yet. Run the latest database migration and try again.",
+            )
+        raise
+    if existing_application:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You have already applied to this job")
+
+    application = JobApplication(
+        job_id=job.id,
+        student_id=student.id,
+        corporate_id=job.corporate_id,
+        college_id=job.college_id,
+        status=ApplicationStatus.APPLIED,
+        expected_salary=payload.expected_salary,
+        cover_letter=payload.cover_letter,
+        resume_url=student.resume_url,
+    )
+    job.current_applications = (job.current_applications or 0) + 1
+    job.applications_count = (job.applications_count or 0) + 1
+
+    try:
+        db.add(application)
+        db.commit()
+        db.refresh(application)
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Job applications are not ready yet. Run the latest database migration and try again.",
+            )
+        raise
+
+    has_offer_letter_columns = _has_offer_letter_columns(db)
+
+    return JobApplicationResponse(
+        id=application.id,
+        job_id=application.job_id,
+        student_id=application.student_id,
+        corporate_id=application.corporate_id,
+        college_id=application.college_id,
+        status=application.status.value if hasattr(application.status, "value") else str(application.status),
+        expected_salary=application.expected_salary,
+        cover_letter=application.cover_letter,
+        resume_url=application.resume_url,
+        offer_letter=application.offer_letter if has_offer_letter_columns else None,
+        offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
+        created_at=application.created_at,
+        updated_at=application.updated_at,
+        student_name=student.name,
+        student_email=student.email,
+        student_phone=student.phone,
+        job_title=job.title,
+        company_name=job.company_name,
+    )
+
+
+@router.get("/applications/me", response_model=list[JobApplicationResponse])
+async def list_my_applications(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user["user_type"] != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can view their applications")
+
+    try:
+        has_offer_letter_columns = _has_offer_letter_columns(db)
+        applications = (
+            db.query(JobApplication, Job)
+            .options(_application_load_options(has_offer_letter_columns))
+            .join(Job, Job.id == JobApplication.job_id)
+            .filter(JobApplication.student_id == UUID(str(current_user["user_id"])))
+            .order_by(JobApplication.created_at.desc())
+            .all()
+        )
+    except ProgrammingError as exc:
+        db.rollback()
+        if _is_missing_job_applications_table(exc):
+            return []
+        raise
+
+    response: list[JobApplicationResponse] = []
+    for application, job in applications:
+        response.append(
+            JobApplicationResponse(
+                id=application.id,
+                job_id=application.job_id,
+                student_id=application.student_id,
+                corporate_id=application.corporate_id,
+                college_id=application.college_id,
+                status=application.status.value if hasattr(application.status, "value") else str(application.status),
+                expected_salary=application.expected_salary,
+                cover_letter=application.cover_letter,
+                resume_url=application.resume_url,
+                offer_letter=application.offer_letter if has_offer_letter_columns else None,
+                offer_letter_sent_at=application.offer_letter_sent_at if has_offer_letter_columns else None,
+                created_at=application.created_at,
+                updated_at=application.updated_at,
+                job_title=job.title,
+                company_name=job.company_name,
+            )
+        )
+
+    return response
+
+
 @router.get("", response_model=list[JobResponse])
 async def list_jobs(
     mine: bool = Query(False),
@@ -119,7 +354,7 @@ async def list_jobs(
     query = db.query(Job).order_by(Job.created_at.desc())
 
     if current_user["user_type"] == "student":
-        query = query.filter(Job.is_public == True)
+        query = query.filter(Job.status == JobStatus.ACTIVE)
 
     if mine:
         if current_user["user_type"] not in {"corporate", "college"}:
@@ -181,6 +416,42 @@ async def update_job(
     db.commit()
     db.refresh(job)
     return _serialize_job(job)
+
+
+@router.delete("/{job_id}")
+async def delete_job(
+    job_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user["user_type"] not in {"corporate", "college"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only corporate or college can delete jobs")
+
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    try:
+        owner_id = UUID(str(current_user["user_id"]))
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+
+    if current_user["user_type"] == "corporate" and job.corporate_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this job")
+    if current_user["user_type"] == "college" and job.college_id != owner_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this job")
+
+    try:
+        db.query(JobApplication).filter(JobApplication.job_id == job.id).delete(synchronize_session=False)
+    except ProgrammingError as exc:
+        db.rollback()
+        if not _is_missing_job_applications_table(exc):
+            raise
+
+    db.delete(job)
+    db.commit()
+    return {"message": "Job deleted", "id": str(job_id)}
+
 
 @router.patch("/{job_id}/approve", response_model=JobResponse)
 async def approve_job(

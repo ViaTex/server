@@ -86,6 +86,7 @@ async def upload_resume(
         secure_url = upload_result.get("secure_url")
 
         # Persist the resume URL to the student's profile
+        student = None
         if secure_url:
             try:
                 student_id = uuid.UUID(str(current_user["user_id"]))
@@ -95,7 +96,13 @@ async def upload_resume(
             student = db.query(Student).filter(Student.id == student_id).first()
             if student:
                 student.resume_url = secure_url
-                db.commit()
+                ResumeStatusService.update_resume_info(
+                    db,
+                    student.id,
+                    resume_url=secure_url,
+                    has_resume=True,
+                    resume_uploaded=True,
+                )
 
         # Enqueue background parsing + embedding job in Redis
         job_id = str(uuid.uuid4())
