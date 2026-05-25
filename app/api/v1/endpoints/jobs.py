@@ -116,6 +116,7 @@ def _serialize_job(job: Job) -> dict:
         "max_des_score": job.max_des_score,
         "ongoing_project_title": job.ongoing_project_title,
         "ongoing_project_description": job.ongoing_project_description,
+        "hiring_status": job.hiring_status,
     }
 
 
