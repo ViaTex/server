@@ -60,6 +60,7 @@ class JobCreateRequest(BaseModel):
     max_des_score: Optional[Decimal] = Field(None, ge=0, le=100, description="Maximum desirability score")
     ongoing_project_title: Optional[str] = Field(None, max_length=255, description="Title of the ongoing project")
     ongoing_project_description: Optional[str] = Field(None, description="Description of the ongoing project")
+    hiring_status: Optional[str] = Field("Actively Hiring", max_length=50, description="Hiring status (e.g. Actively Hiring, Immediate Joiners)")
 
     @model_validator(mode="after")
     def validate_ranges(self):
