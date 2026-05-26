@@ -38,6 +38,13 @@ def check_dependencies() -> None:
         # has not been run yet for just this table.
         JobApplication.__table__.create(bind=engine, checkfirst=True)
         print("INFO:     job_applications table ready")
+
+        # Ensure profile_picture_url columns exist
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE mentors ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE corporates ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+        print("INFO:     profile_picture_url columns verified/added")
     except Exception as exc:
         print(f"ERROR:    Database connection failed: {exc}")
 
