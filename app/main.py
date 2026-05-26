@@ -44,7 +44,9 @@ def check_dependencies() -> None:
             connection.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
             connection.execute(text("ALTER TABLE mentors ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
             connection.execute(text("ALTER TABLE corporates ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
-        print("INFO:     profile_picture_url columns verified/added")
+            connection.execute(text("ALTER TABLE colleges ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE admins ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+        print("INFO:     profile_picture_url columns verified/added for all user tables")
     except Exception as exc:
         print(f"ERROR:    Database connection failed: {exc}")
 
