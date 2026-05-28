@@ -5,6 +5,7 @@ from app.core.database import engine
 from app.core.redis import get_redis_client
 from app.api.v1.api import api_router
 from sqlalchemy import text
+from app.models.job_application import JobApplication
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -32,6 +33,20 @@ def check_dependencies() -> None:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         print("INFO:     Database connection OK")
+
+        # Local/dev safety net so the new apply flow works even if Alembic
+        # has not been run yet for just this table.
+        JobApplication.__table__.create(bind=engine, checkfirst=True)
+        print("INFO:     job_applications table ready")
+
+        # Ensure profile_picture_url columns exist
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE mentors ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE corporates ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE colleges ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+            connection.execute(text("ALTER TABLE admins ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR(1000)"))
+        print("INFO:     profile_picture_url columns verified/added for all user tables")
     except Exception as exc:
         print(f"ERROR:    Database connection failed: {exc}")
 
