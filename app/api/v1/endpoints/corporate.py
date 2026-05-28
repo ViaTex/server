@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, load_only
@@ -238,6 +238,12 @@ async def update_corporate_applicant(
             raise HTTPException(status_code=400, detail="Invalid application status")
         application.status = ApplicationStatus(normalized_status)
 
+        # Placement tracking: auto-stamp when moving to 'selected'
+        if normalized_status == ApplicationStatus.SELECTED.value:
+            application.placed_at = datetime.now(timezone.utc)
+            application.placed_by_corporate_name = corporate.company_name
+            application.placed_job_title = job.title
+
     if "offer_letter" in update_data:
         if not has_offer_letter_columns:
             raise HTTPException(status_code=503, detail="Run the latest database migration before sending offer letters.")
@@ -353,3 +359,194 @@ async def upload_offer_letter(
     db.refresh(application)
 
     return _application_response(application, student, job, corporate, True, resume_status)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SMART MATCH  —  Phase 2 of the Trust-Based Hiring Pipeline
+# ════════════════════════════════════════════════════════════════════════════
+
+from app.models.user import SkillEvaluation, SkillEvaluationStatus, SkillEvaluationVerdict, Mentor
+from app.models.project import Project
+
+
+@router.get("/smart-matches")
+async def smart_matches(
+    min_des: float = Query(75.0, ge=0, le=100, description="Minimum DES score filter"),
+    skills: list[str] = Query(default=[], description="Required verified skill domains"),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_corporate),
+    db: Session = Depends(get_db),
+):
+    """
+    Phase 2 — Zero-Screening Smart Match.
+    Returns verified students whose DES score meets the threshold
+    and have at least one successfully evaluated SkillEvaluation.
+    Reads Student.current_des_score directly — no recomputation.
+    """
+    # Base: students with sufficient DES
+    query = (
+        db.query(Student)
+        .filter(Student.current_des_score >= min_des)
+        .order_by(Student.current_des_score.desc())
+    )
+
+    students: list[Student] = query.all()
+
+    # Only include students with at least one PASSING evaluated viva
+    passing_verdicts = {
+        SkillEvaluationVerdict.EXCELLENT,
+        SkillEvaluationVerdict.VERY_GOOD,
+        SkillEvaluationVerdict.GOOD,
+    }
+
+    results = []
+    for student in students:
+        evals = (
+            db.query(SkillEvaluation)
+            .filter(
+                SkillEvaluation.student_id == student.id,
+                SkillEvaluation.status == SkillEvaluationStatus.EVALUATED,
+                SkillEvaluation.verdict.in_(list(passing_verdicts)),
+            )
+            .all()
+        )
+        if not evals:
+            continue
+
+        # Collect verified skill domains from linked projects
+        verified_skill_domains: list[str] = []
+        for e in evals:
+            if e.project_id:
+                proj = db.query(Project).filter(Project.id == e.project_id).first()
+                if proj and proj.skill_domain and proj.skill_domain not in verified_skill_domains:
+                    verified_skill_domains.append(proj.skill_domain)
+
+        # Skill filter: if caller specified required skills, at least one must match
+        if skills:
+            matched = any(
+                any(req.lower() in dom.lower() for dom in verified_skill_domains)
+                for req in skills
+            )
+            if not matched:
+                continue
+
+        # Best evaluation for summary
+        best_eval = max(evals, key=lambda e: (e.total_score or 0))
+        mentor = db.query(Mentor).filter(Mentor.id == best_eval.mentor_id).first()
+
+        results.append({
+            "student_id": str(student.id),
+            "name": student.name,
+            "email": student.email,
+            "location": student.city or student.state or student.country,
+            "des_score": float(student.current_des_score or 0),
+            "badge": student.badge,
+            "verified_skills": verified_skill_domains,
+            "best_viva_score": best_eval.total_score,
+            "best_viva_verdict": best_eval.verdict.value if best_eval.verdict else None,
+            "mentor_name": mentor.name if mentor else None,
+            "github_profile": student.github_profile,
+            "linkedin_profile": student.linkedin_profile,
+        })
+
+        if len(results) >= limit:
+            break
+
+    return results
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CANDIDATE DETAIL  —  Phase 3: Full profile + Mentor Evaluation Report
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.get("/candidates/{student_id}")
+async def get_candidate_detail(
+    student_id: str,
+    current_user: dict = Depends(get_current_corporate),
+    db: Session = Depends(get_db),
+):
+    """
+    Phase 3 — Shortlisting with Trust.
+    Returns the full candidate profile including mentor evaluation reports,
+    DES score, verified projects, and professional links.
+    """
+    try:
+        sid = UUID(student_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid student_id")
+
+    student = db.query(Student).filter(Student.id == sid).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # All evaluated skill evaluations
+    evals = (
+        db.query(SkillEvaluation)
+        .filter(
+            SkillEvaluation.student_id == sid,
+            SkillEvaluation.status == SkillEvaluationStatus.EVALUATED,
+        )
+        .order_by(SkillEvaluation.updated_at.desc())
+        .all()
+    )
+
+    evaluation_reports = []
+    for e in evals:
+        mentor = db.query(Mentor).filter(Mentor.id == e.mentor_id).first()
+        project = db.query(Project).filter(Project.id == e.project_id).first() if e.project_id else None
+        evaluation_reports.append({
+            "evaluation_id": str(e.id),
+            "mentor_name": mentor.name if mentor else None,
+            "mentor_role": mentor.current_role if mentor else None,
+            "project_title": project.title if project else None,
+            "project_github": project.github_url if project else None,
+            "skill_domain": project.skill_domain if project else None,
+            "score_technical": e.score_technical,
+            "score_practical": e.score_practical,
+            "score_communication": e.score_communication,
+            "score_originality": e.score_originality,
+            "total_score": e.total_score,
+            "verdict": e.verdict.value if e.verdict else None,
+            "feedback_strengths": e.feedback_strengths,
+            "feedback_improvements": e.feedback_improvements,
+            "evaluated_at": e.updated_at or e.created_at,
+        })
+
+    # Verified projects
+    from app.models.project import ProjectStatus
+    projects = (
+        db.query(Project)
+        .filter(Project.student_id == sid, Project.status == ProjectStatus.VERIFIED)
+        .all()
+    )
+
+    return {
+        "student_id": str(student.id),
+        "name": student.name,
+        "email": student.email,
+        "phone": student.phone,
+        "bio": student.bio,
+        "location": f"{student.city or ''}, {student.state or ''}, {student.country or ''}".strip(", "),
+        "des_score": float(student.current_des_score or 0),
+        "badge": student.badge,
+        "technical_skills": student.technical_skills,
+        "soft_skills": student.soft_skills,
+        "education": student.education or [],
+        "github_profile": student.github_profile,
+        "linkedin_profile": student.linkedin_profile,
+        "personal_website": student.personal_website,
+        "profile_picture_url": student.profile_picture_url,
+        "evaluation_reports": evaluation_reports,
+        "verified_projects": [
+            {
+                "id": str(p.id),
+                "title": p.title,
+                "skill_domain": p.skill_domain,
+                "tech_stack": p.tech_stack or [],
+                "github_url": p.github_url,
+                "live_url": p.live_url,
+                "verified_badge": p.verified_badge,
+            }
+            for p in projects
+        ],
+    }
