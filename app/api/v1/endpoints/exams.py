@@ -191,6 +191,19 @@ async def submit_section_a(
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    question_payload = {
+        "prompt_text": SECTION_A_PROMPT,
+        "mcqs": [],
+        "long_questions": [],
+        "topics": [],
+        "correct_answer": "",
+    }
+    response_payload = {
+        "text_answer": "",
+        "video_url": video_url,
+        "mcq_answers": {},
+        "long_answers": {},
+    }
     response = create_exam_response(
         db,
         session_id=session.id,
@@ -236,7 +249,20 @@ async def generate_section_b_question(
         raise HTTPException(status_code=400, detail="Invalid session_id") from exc
 
     session = get_exam_session(db, session_id=session_uuid, student_id=UUID(current_user["user_id"]))
-    _ensure_step(session, "SECTION_B")
+    if session.current_step != "SECTION_B":
+        if session.current_step == "SECTION_C":
+            existing_response = (
+                db.query(ExamResponse)
+                .filter(
+                    ExamResponse.id == response_uuid,
+                    ExamResponse.session_id == session.id,
+                    ExamResponse.section_type == "B_FUNDAMENTALS",
+                )
+                .first()
+            )
+            if existing_response and existing_response.ai_score is not None:
+                return {"message": "Section B already submitted", "current_step": session.current_step}
+        _ensure_step(session, "SECTION_B")
 
     existing = (
         db.query(ExamResponse)
@@ -261,6 +287,11 @@ async def generate_section_b_question(
                     "topics": stored_payload.get("topics", []),
                 }
         except json.JSONDecodeError:
+            parsed = None
+
+        if isinstance(parsed, dict) and parsed.get("prompt_text") is not None:
+            question_payload = parsed
+        else:
             question_payload = {
                 "prompt_text": "",
                 "mcqs": [],
@@ -369,6 +400,9 @@ async def submit_section_b_response(
             }
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail="Stored Section B questions are invalid") from exc
+
+    if not isinstance(question_payload, dict):
+        raise HTTPException(status_code=500, detail="Stored Section B questions are invalid")
 
     answer_key = {}
 
@@ -858,6 +892,34 @@ async def calculate_final_score(
         performance_snapshot=performance_snapshot,
         is_passed=bool(is_passed),
     )
+
+    student = _load_student(db, session.student_id)
+    skill_profile = student.skill_profile if isinstance(student.skill_profile, dict) else {}
+
+    section_scores = {
+        "A_INTRO": float(section_a_score),
+        "B_FUNDAMENTALS": float(section_b_score),
+        "C_LOGIC": float(section_c_score),
+        "D_DEBUG": float(section_d_score),
+    }
+
+    for response in responses:
+        topics = _extract_topics(response.ai_feedback)
+        if not topics:
+            continue
+        score_value = section_scores.get(response.section_type)
+        if score_value is None:
+            continue
+        for topic in topics:
+            _apply_skill_profile_cma(skill_profile, topic=topic, score=score_value)
+
+    student.skill_profile = skill_profile
+    student.current_des_score = float(total)
+    db.add(student)
+    db.commit()
+    db.refresh(student)
+
+    set_current_step(db, session=session, next_step="FINALIZED")
 
     return {
         "message": "Final score calculated",
