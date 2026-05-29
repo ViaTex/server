@@ -230,6 +230,7 @@ class StudentProfileBase(BaseModel):
     github_profile: Optional[str] = None
     personal_website: Optional[str] = None
     resume_url: Optional[str] = None
+    profile_picture_url: Optional[str] = None
     current_des_score: Optional[float] = None
     badge: Optional[str] = None
 

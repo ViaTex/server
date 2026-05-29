@@ -90,6 +90,17 @@ class Settings(BaseSettings):
     # Terms and policies
     TERMS_VERSION: str = "v1"
 
+    @field_validator("APP_DEBUG", "DEBUG", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, v: Any) -> bool:
+        if isinstance(v, str):
+            normalized = v.strip().lower()
+            if normalized in {"release", "production", "prod"}:
+                return False
+            if normalized in {"debug", "development", "dev"}:
+                return True
+        return v
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:

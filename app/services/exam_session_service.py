@@ -95,7 +95,7 @@ def finalize_exam(
     session.is_passed = is_passed
     if is_passed:
         session.attempt_number = 0
-    session.current_step = "COMPLETED"
+    session.current_step = "FINALIZED"
     session.completed_at = datetime.now(timezone.utc)
     db.add(session)
     db.commit()

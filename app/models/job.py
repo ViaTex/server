@@ -94,6 +94,7 @@ class Job(Base):
     max_des_score = Column(Numeric(5, 2), nullable=True)
     ongoing_project_title = Column(String(255), nullable=True)
     ongoing_project_description = Column(Text, nullable=True)
+    hiring_status = Column(String(50), nullable=True, default="Actively Hiring")
 
     corporate_id = Column(UUID(as_uuid=True), ForeignKey("corporates.id"), nullable=True, index=True)
     college_id = Column(UUID(as_uuid=True), ForeignKey("colleges.id"), nullable=True, index=True)

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.auth import (
     StudentRegisterRequest,
+    MentorRegisterRequest,
     CorporateRegisterRequest,
     CollegeRegisterRequest,
     LoginRequest,
@@ -44,6 +45,20 @@ async def register_corporate(request: CorporateRegisterRequest, db: Session = De
         user = await auth_service.register_corporate(request)
         return {
             "message": "Corporate registered successfully",
+            "data": {"id": str(user.id), "email": user.email},
+            "status": "success"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/register/mentor")
+async def register_mentor(request: MentorRegisterRequest, db: Session = Depends(get_db)):
+    auth_service = AuthService(db)
+    try:
+        user = await auth_service.register_mentor(request)
+        return {
+            "message": "Mentor registered successfully",
             "data": {"id": str(user.id), "email": user.email},
             "status": "success"
         }
