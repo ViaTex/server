@@ -1,7 +1,7 @@
 """Restore skill_profile on students.
 
-Revision ID: j1k2l3m4n5o6
-Revises: g2h3i4j5k6l7
+Revision ID: j1k2l3m4n5o7
+Revises: d4f8a1b2c3e7
 Create Date: 2026-04-15
 
 """
@@ -15,8 +15,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = "j1k2l3m4n5o6"
-down_revision: Union[str, None] = "i9j0k1l2m3n4"
+revision: str = "j1k2l3m4n5o7"
+down_revision: Union[str, None] = "d4f8a1b2c3e7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
