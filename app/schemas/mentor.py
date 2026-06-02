@@ -66,6 +66,18 @@ class SkillEvaluationStudentReviewUpdate(BaseModel):
     student_technical_issues: Optional[str] = None
 
 
+class EvaluationProjectSummary(BaseModel):
+    title: str
+    description: Optional[str] = None
+    github_url: Optional[str] = None
+    live_url: Optional[str] = None
+    skill_domain: Optional[str] = None
+
+class EvaluationStudentSummary(BaseModel):
+    name: str
+    email: str
+    profile_picture_url: Optional[str] = None
+
 class SkillEvaluationResponse(BaseModel):
     evaluation_id: str
     mentor_id: str
@@ -87,3 +99,5 @@ class SkillEvaluationResponse(BaseModel):
     student_technical_issues: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    project: Optional[EvaluationProjectSummary] = None
+    student: Optional[EvaluationStudentSummary] = None

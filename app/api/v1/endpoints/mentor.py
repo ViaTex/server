@@ -39,6 +39,24 @@ def _as_datetime_list(raw_slots: list) -> list[datetime]:
 
 
 def _serialize_evaluation(evaluation: SkillEvaluation) -> SkillEvaluationResponse:
+    project_data = None
+    if evaluation.project:
+        project_data = {
+            "title": evaluation.project.title,
+            "description": evaluation.project.description,
+            "github_url": evaluation.project.github_url,
+            "live_url": evaluation.project.live_url,
+            "skill_domain": evaluation.project.skill_domain,
+        }
+        
+    student_data = None
+    if evaluation.student:
+        student_data = {
+            "name": evaluation.student.name,
+            "email": evaluation.student.email,
+            "profile_picture_url": evaluation.student.profile_picture_url,
+        }
+
     return SkillEvaluationResponse(
         evaluation_id=str(evaluation.id),
         mentor_id=str(evaluation.mentor_id),
@@ -60,6 +78,8 @@ def _serialize_evaluation(evaluation: SkillEvaluation) -> SkillEvaluationRespons
         student_technical_issues=evaluation.student_technical_issues,
         created_at=evaluation.created_at,
         updated_at=evaluation.updated_at,
+        project=project_data,
+        student=student_data,
     )
 
 

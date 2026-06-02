@@ -87,6 +87,7 @@ def update_response_answer(
     response: ExamResponse,
     user_response: str,
 ) -> ExamResponse:
+    response_embedding_text = extract_text_for_embedding(user_response)
     response.user_response = user_response
     response_embedding_text = extract_text_for_embedding(user_response) if user_response else ""
     response.response_embedding = generate_embedding(response_embedding_text) if response_embedding_text else None

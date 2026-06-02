@@ -419,3 +419,56 @@ async def get_ats_score(
     except Exception as e:
         raise HTTPException(500, f"Failed to get ATS score: {str(e)}")
 
+
+@router.post("/profile-picture/upload")
+async def upload_profile_picture(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload a profile picture to Cloudinary and update the student's profile.
+    """
+    if not file:
+        raise HTTPException(status_code=400, detail="No file provided")
+        
+    filename = (file.filename or "").lower()
+    content_type = (file.content_type or "").lower()
+    if not (content_type.startswith("image/") or filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif"))):
+        raise HTTPException(status_code=400, detail="Only image files (PNG, JPG, JPEG, WEBP, GIF) are supported")
+        
+    content = await file.read()
+    MAX_SIZE = 5 * 1024 * 1024  # 5MB
+    if len(content) > MAX_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum: 5MB")
+        
+    student = db.query(Student).filter(Student.id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+        
+    try:
+        # Uploading to cloudinary
+        upload_result = cloudinary.uploader.upload(
+            content,
+            resource_type="image",
+            folder="student_profile_pictures" 
+        )
+        
+        secure_url = upload_result.get("secure_url")
+        if not secure_url:
+            raise HTTPException(status_code=500, detail="Failed to get secure URL from Cloudinary")
+            
+        # Update student profile picture URL
+        student.profile_picture_url = secure_url
+        db.commit()
+        db.refresh(student)
+        
+        return {
+            "message": "Profile picture uploaded successfully",
+            "profile_picture_url": secure_url
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
