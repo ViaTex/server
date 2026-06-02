@@ -40,7 +40,7 @@ services:
       DEBUG: "true"
       SECRET_KEY: change-me-in-production
     volumes:
-      - ./server/app:/app/app
+      - .:/app
     depends_on:
       postgres:
         condition: service_healthy
