@@ -6,6 +6,14 @@ from app.core.redis import get_redis_client
 from app.api.v1.api import api_router
 from sqlalchemy import text
 from app.models.job_application import JobApplication
+from app.models.user import (
+    PasswordResetOTP,
+    PasswordResetToken,
+    EmailVerificationToken,
+    PasswordHistory,
+    AuthAuditLog,
+    UserSession,
+)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -37,6 +45,27 @@ def check_dependencies() -> None:
         # Local/dev safety net so the new apply flow works even if Alembic
         # has not been run yet for just this table.
         JobApplication.__table__.create(bind=engine, checkfirst=True)
+        PasswordResetOTP.__table__.create(bind=engine, checkfirst=True)
+        PasswordResetToken.__table__.create(bind=engine, checkfirst=True)
+        EmailVerificationToken.__table__.create(bind=engine, checkfirst=True)
+        PasswordHistory.__table__.create(bind=engine, checkfirst=True)
+        AuthAuditLog.__table__.create(bind=engine, checkfirst=True)
+        UserSession.__table__.create(bind=engine, checkfirst=True)
+
+        # Backward-compatible schema patching for existing deployments.
+        # Ensures newly added auth recovery columns exist even when old tables already exist.
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE password_reset_otps ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE password_reset_otps ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 5"))
+            conn.execute(text("ALTER TABLE password_reset_otps ADD COLUMN IF NOT EXISTS resend_count INTEGER NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE password_reset_otps ADD COLUMN IF NOT EXISTS next_resend_at TIMESTAMPTZ NULL"))
+
+            conn.execute(text("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_fingerprint VARCHAR(255)"))
+            conn.execute(text("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_label VARCHAR(255)"))
+            conn.execute(text("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS login_location VARCHAR(255)"))
+            conn.execute(text("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS trusted_device BOOLEAN NOT NULL DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ NULL"))
+            conn.execute(text("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS revoked_reason VARCHAR(255)"))
         print("INFO:     job_applications table ready")
     except Exception as exc:
         print(f"ERROR:    Database connection failed: {exc}")

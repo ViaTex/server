@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from typing import Optional, List
 from datetime import date
 from app.models.user import Gender
@@ -82,3 +82,77 @@ class LoginRequest(BaseModel):
 class OTPVerifyRequest(BaseModel):
     email: EmailStr
     code: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=8)
+
+
+class ForgotPasswordStartRequest(BaseModel):
+    identifier: Optional[str] = Field(None, min_length=3, max_length=255, description="Email or phone")
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    captcha_token: Optional[str] = None
+    channel: str = Field(default="email", description="email or sms")
+
+    @model_validator(mode="after")
+    def normalize_identifier(self):
+        if not self.identifier:
+            self.identifier = str(self.email or self.phone or "").strip()
+        if not self.identifier:
+            raise ValueError("identifier or email or phone is required")
+        return self
+
+
+class ForgotPasswordOtpVerifyRequest(BaseModel):
+    identifier: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    otp: Optional[str] = Field(None, min_length=6, max_length=6)
+    code: Optional[str] = Field(None, min_length=6, max_length=6)
+    captcha_token: Optional[str] = None
+
+    @model_validator(mode="after")
+    def normalize_fields(self):
+        if not self.identifier:
+            self.identifier = str(self.email or self.phone or "").strip()
+        if not self.otp:
+            self.otp = self.code
+        if not self.identifier:
+            raise ValueError("identifier or email or phone is required")
+        if not self.otp:
+            raise ValueError("otp or code is required")
+        return self
+
+
+class ForgotPasswordCompleteRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(..., min_length=8)
+
+
+class ResendOtpRequest(BaseModel):
+    identifier: str
+    channel: str = Field(default="email")
+
+
+class EmailVerificationLinkRequest(BaseModel):
+    token: str
+
+
+class EmailVerificationOtpRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+class ResendEmailVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class MailTestRequest(BaseModel):
+    email: EmailStr
