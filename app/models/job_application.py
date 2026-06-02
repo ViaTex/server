@@ -45,5 +45,10 @@ class JobApplication(Base):
     offer_letter = Column(Text, nullable=True)
     offer_letter_sent_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Placement tracking — set automatically when status → selected
+    placed_at = Column(DateTime(timezone=True), nullable=True)
+    placed_by_corporate_name = Column(String(255), nullable=True)
+    placed_job_title = Column(String(255), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)

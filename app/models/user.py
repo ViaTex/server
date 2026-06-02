@@ -109,6 +109,7 @@ class Student(BaseUser):
     student_unique_id = Column(String(10), unique=True, index=True, nullable=True)
 
     current_des_score = Column(Numeric(4, 2), nullable=False, server_default="0.0")
+    skill_profile = Column(JSONB, nullable=True)
     badge = Column(String(20), nullable=True)
     skill_profile = Column(JSONB, nullable=True)
     
@@ -196,7 +197,7 @@ class SkillEvaluation(Base):
     student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
-    status = Column(Enum(SkillEvaluationStatus), nullable=False, default=SkillEvaluationStatus.SUBMITTED)
+    status = Column(Enum(SkillEvaluationStatus, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=SkillEvaluationStatus.SUBMITTED)
     proposed_slots = Column(JSONB, nullable=False, default=list)
     confirmed_slot = Column(DateTime(timezone=True), nullable=True)
     viva_meeting_link = Column(String(1000), nullable=True)
@@ -206,7 +207,7 @@ class SkillEvaluation(Base):
     score_communication = Column(Integer, nullable=True)
     score_originality = Column(Integer, nullable=True)
     total_score = Column(Integer, nullable=True)
-    verdict = Column(Enum(SkillEvaluationVerdict), nullable=True)
+    verdict = Column(Enum(SkillEvaluationVerdict, values_callable=lambda obj: [e.value for e in obj]), nullable=True)
     feedback_strengths = Column(Text, nullable=True)
     feedback_improvements = Column(Text, nullable=True)
 
@@ -218,6 +219,7 @@ class SkillEvaluation(Base):
 
     mentor = relationship("Mentor", back_populates="skill_evaluations")
     student = relationship("Student", back_populates="evaluations_received")
+    project = relationship("Project", primaryjoin="foreign(SkillEvaluation.project_id) == Project.id")
 
 
 class UserSession(Base):
