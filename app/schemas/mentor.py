@@ -22,6 +22,7 @@ class MentorProfileResponse(BaseModel):
     user_id: str
     email: EmailStr
     name: str
+    profile_picture_url: Optional[str] = None
     phone: Optional[str] = None
     current_role: Optional[str] = None
     expertise_areas: list[str] = Field(default_factory=list)
