@@ -10,7 +10,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
@@ -25,8 +24,6 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     conn = op.get_bind()
     inspector = inspect(conn)
-
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     if inspector.has_table("exam_sessions"):
         with op.batch_alter_table("exam_sessions") as batch_op:
@@ -44,12 +41,11 @@ def upgrade() -> None:
             sa.Column("session_id", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("section_type", sa.String(length=32), nullable=False),
             sa.Column("question_text", sa.Text(), nullable=False),
-            sa.Column("question_embedding", Vector(384), nullable=True),
             sa.Column("user_response", sa.Text(), nullable=False),
-            sa.Column("response_embedding", Vector(384), nullable=True),
             sa.Column("transcript", sa.Text(), nullable=True),
-            sa.Column("ai_score", sa.Numeric(precision=6, scale=2), nullable=True),
-            sa.Column("mentor_score", sa.Numeric(precision=6, scale=2), nullable=True),
+            # Upgraded to JSONB for multi-topic production scoring (1.00 - 10.00 scales)
+            sa.Column("ai_score", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            sa.Column("mentor_score", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
             sa.Column("hints_used", sa.Integer(), nullable=False, server_default=sa.text("0")),
             sa.ForeignKeyConstraint(["session_id"], ["exam_sessions.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
