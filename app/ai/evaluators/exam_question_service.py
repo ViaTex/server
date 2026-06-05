@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 from app.ai.utils.logger import ai_error
 
@@ -13,10 +14,11 @@ def generate_section_question(
     section_type: str,
     student: Student,
     prior_context: str | None = None,
-) -> str:
+) -> dict:
     system_prompt = (
         "You are an exam generator for a multi-stage skills assessment. "
-        "Return ONLY the question text without extra commentary or formatting."
+        "Return ONLY valid JSON with schema: "
+        "{\"prompt_text\": \"<The coding or debugging scenario text>\", \"topics\": [\"<topic1>\", \"<topic2>\"]}."
     )
 
     profile_summary = (
@@ -32,17 +34,27 @@ def generate_section_question(
         f"Section type: {section_type}.\n"
         f"{profile_summary}\n"
         f"{context_block}\n"
-        "Generate a concise, challenging question aligned to the section type."
+        "Generate a concise, challenging question aligned to the section type and return structured JSON."
     )
 
-    question = generate_chat_completion(
+    raw_text = generate_chat_completion(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.5,
-        max_tokens=220,
+        max_tokens=300,
     )
 
-    return question.strip() or "Please respond to the prompt for this section."
+    payload = _parse_json_response(raw_text)
+    if not isinstance(payload, dict):
+        payload = {"prompt_text": raw_text.strip() or "Please respond to the prompt for this section.", "topics": []}
+    
+    if not payload.get("prompt_text"):
+        payload["prompt_text"] = "Please respond to the prompt for this section."
+    
+    if not isinstance(payload.get("topics"), list):
+        payload["topics"] = []
+        
+    return payload
 
 
 def _extract_json_object(raw_text: str) -> dict:
@@ -76,7 +88,7 @@ def _fallback_section_b_payload() -> tuple[dict, dict]:
     for idx in range(1, 16):
         mcqs.append(
             {
-                "id": f"q{idx}",
+                "id": str(uuid.uuid4()),
                 "question": f"Fundamentals check {idx}: choose the best answer.",
                 "options": ["A", "B", "C", "D"],
                 "correct_option": "A",
@@ -87,7 +99,7 @@ def _fallback_section_b_payload() -> tuple[dict, dict]:
     for idx in range(1, 6):
         long_questions.append(
             {
-                "id": f"l{idx}",
+                "id": str(uuid.uuid4()),
                 "question": f"Explain your reasoning for concept {idx} with a real-world example.",
             }
         )
@@ -98,6 +110,7 @@ def _fallback_section_b_payload() -> tuple[dict, dict]:
             for item in mcqs
         ],
         "long_questions": long_questions,
+        "topics": [],
     }
     answer_key = {"mcq_answers": {item["id"]: item["correct_option"] for item in mcqs}}
     return public_payload, answer_key
@@ -143,7 +156,7 @@ def _validate_section_b_payload(payload: dict) -> None:
 
 
 def _normalize_mcq_item(item: dict) -> dict:
-    mcq_id = item.get("id")
+    mcq_id = item.get("id") or str(uuid.uuid4())
     question = item.get("question")
     options = item.get("options")
     correct = item.get("correct_option")
@@ -189,14 +202,18 @@ def _normalize_section_b_payload(payload: dict) -> dict:
             continue
         normalized_long.append(
             {
-                "id": item.get("id"),
+                "id": item.get("id") or str(uuid.uuid4()),
                 "question": item.get("question"),
             }
         )
 
+    topics = payload.get("topics") if isinstance(payload.get("topics"), list) else []
+    topics = [t for t in topics if isinstance(t, str)]
+
     return {
         "mcqs": normalized_mcqs,
         "long_questions": normalized_long,
+        "topics": topics,
     }
 
 
@@ -212,10 +229,11 @@ def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
         "You are an exam generator for Section B fundamentals. "
         "Return ONLY valid JSON with schema: "
         "{\"mcqs\":[{" \
-        "\"id\":\"q1\",\"question\":\"...\",\"options\":[\"A\",\"B\",\"C\",\"D\"],\"correct_option\":\"B\"}"
+        "\"question\":\"...\",\"options\":[\"A\",\"B\",\"C\",\"D\"],\"correct_option\":\"B\"}"
         "]," \
         "\"long_questions\":[{" \
-        "\"id\":\"l1\",\"question\":\"...\"}]}" \
+        "\"question\":\"...\"}]," \
+        "\"topics\":[\"...\"]}" \
         " with exactly 15 MCQs and 5 long questions. "
         "Each MCQ must include correct_option and it must be one of the options. "
         "Do not include markdown or explanations."
@@ -224,7 +242,7 @@ def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
     user_prompt = (
         f"{profile_summary}\n"
         "Generate Section B fundamentals: 15 MCQs with 4 options each, "
-        "and 5 long descriptive questions. Ensure unique ids q1-q15 and l1-l5. "
+        "and 5 long descriptive questions. Also generate a topics array containing relevant technical topics. "
         "Return options as plain strings and include correct_option for every MCQ."
     )
 
@@ -272,6 +290,7 @@ def generate_section_b_questions(*, student: Student) -> tuple[dict, dict]:
             }
             for item in payload["long_questions"]
         ],
+        "topics": payload.get("topics", []),
     }
 
     answer_key = {

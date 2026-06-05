@@ -15,6 +15,7 @@ from app.ai.evaluator import generate_chat_completion
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.redis import get_redis_client
+from app.core.section_settings import SECTION_CONFIG
 from app.core.security import get_current_student
 from app.models.exam_response import ExamResponse
 from app.models.exam_session import ExamSession
@@ -213,7 +214,7 @@ async def submit_section_a(
                 "prompt_text": SECTION_A_PROMPT,
                 "mcqs": [],
                 "long_questions": [],
-                "topics": [],
+                "topics": SECTION_CONFIG.get("Section_A", {}).get("topics", ["Clarity", "Communication", "Behavior"]),
             }
         ),
         user_response=json.dumps(
@@ -526,12 +527,12 @@ async def generate_section_c_question(
         }
 
     student = _load_student(db, session.student_id)
-    question = generate_section_question(section_type="C_LOGIC", student=student)
+    question_payload = generate_section_question(section_type="C_LOGIC", student=student)
     question_schema = {
-        "prompt_text": question,
+        "prompt_text": question_payload.get("prompt_text", ""),
         "mcqs": [],
         "long_questions": [],
-        "topics": [],
+        "topics": question_payload.get("topics", []),
     }
     response = create_exam_response(
         db,
@@ -695,17 +696,21 @@ async def generate_section_d_question(
                 prior_context = last_logic.user_response
         except json.JSONDecodeError:
             prior_context = last_logic.user_response
-    question = generate_section_question(
+    question_payload = generate_section_question(
         section_type="D_DEBUG",
         student=student,
         prior_context=prior_context,
     )
 
+    dynamic_topics = question_payload.get("topics", [])
+    fixed_topics = SECTION_CONFIG.get("Section_D", {}).get("topics", ["Problem Solving", "Debugging Speed"])
+    combined_topics = dynamic_topics + fixed_topics
+
     question_schema = {
-        "prompt_text": question,
+        "prompt_text": question_payload.get("prompt_text", ""),
         "mcqs": [],
         "long_questions": [],
-        "topics": [],
+        "topics": combined_topics,
     }
     response = create_exam_response(
         db,

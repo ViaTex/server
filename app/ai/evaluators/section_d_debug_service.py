@@ -10,9 +10,7 @@ from app.ai.utils.topic_cache import get_global_topics, update_global_topics
 from app.core.database import SessionLocal
 from app.models.exam_response import ExamResponse
 from app.services.exam_response_service import update_response_ai_analysis
-
-
-SECTION_D_FIXED_TOPICS = ["Problem Solving Skill", "Verbal Explanation", "Confidence"]
+from app.core.section_settings import SECTION_CONFIG
 
 
 def _extract_json_object(raw_text: str) -> dict | None:
@@ -90,10 +88,11 @@ def score_debug_transcript(*, question_text: str, transcript: str) -> dict:
 
 
 def _evaluate_section_d_topics(*, transcript: str, global_topics: list[str]) -> dict:
+    fixed_topics = SECTION_CONFIG.get("Section_D", {}).get("topics", [])
     topics_text = ", ".join(global_topics) if global_topics else "(none)"
     system_prompt = (
         "You are evaluating a debugging interview transcript. Score ONLY these fixed topics: "
-        f"{SECTION_D_FIXED_TOPICS}. Also generate 1-2 technical topics based on the transcript. "
+        f"{fixed_topics}. Also generate 1-2 technical topics based on the transcript. "
         "RAG topics list (use exact matches first): "
         f"{topics_text}. "
         "If creating a new topic, use Title Case, no symbols, no acronyms unless a 3-letter tech, "
@@ -125,7 +124,7 @@ def _evaluate_section_d_topics(*, transcript: str, global_topics: list[str]) -> 
     new_topics = [topic for topic in new_topics if isinstance(topic, str) and topic.strip()]
 
     normalized_scores = {}
-    for topic in SECTION_D_FIXED_TOPICS:
+    for topic in fixed_topics:
         normalized_scores[topic] = _coerce_score(topic_scores.get(topic))
 
     for topic, value in topic_scores.items():

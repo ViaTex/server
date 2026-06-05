@@ -9,18 +9,11 @@ from app.models.exam_response import ExamResponse
 from app.models.exam_session import ExamSession
 from app.services.exam_session_service import set_current_step
 from app.services.exam_response_service import update_response_ai_analysis
-
-
-SECTION_A_TOPICS = ["Confidence", "Communication", "Professionalism", "Clarity"]
-
-
-SECTION_A_TOPICS = ["Confidence", "Communication", "Professionalism", "Clarity"]
-
-
-SECTION_A_TOPICS = ["Confidence", "Communication", "Professionalism", "Clarity"]
+from app.core.section_settings import SECTION_CONFIG
 
 
 def _analyze_section_a_transcript(transcript: str) -> dict:
+    fixed_topics = SECTION_CONFIG.get("Section_A", {}).get("topics", [])
     system_prompt = (
         "You are an expert technical recruiter and behavioral analyst. "
         "Evaluate the transcript for Section A (self-introduction). "
@@ -34,7 +27,7 @@ def _analyze_section_a_transcript(transcript: str) -> dict:
         "\"topics\": [..]}}."
     )
     user_prompt = (
-        f"Allowed topics: {SECTION_A_TOPICS}\n"
+        f"Allowed topics: {fixed_topics}\n"
         f"Transcript:\n{transcript}"
     )
 
@@ -81,7 +74,7 @@ def _analyze_section_a_transcript(transcript: str) -> dict:
             "strengths": strengths,
             "areas_for_improvement": areas,
             "behavioral_analysis": behavioral,
-            "topics": SECTION_A_TOPICS,
+            "topics": fixed_topics,
         },
     }
 
@@ -99,7 +92,7 @@ def process_section_a_intro_ai(response_id: str, video_url: str) -> None:
 
         media_bytes = download_media(video_url)
         transcript = transcribe_media(media_bytes, filename="section_a_intro.mp4")
-        analysis = _evaluate_section_a_section_a_transcript(transcript, SECTION_A_TOPICS)
+        analysis = _analyze_section_a_transcript(transcript)
 
         update_response_ai_analysis(
             db,
