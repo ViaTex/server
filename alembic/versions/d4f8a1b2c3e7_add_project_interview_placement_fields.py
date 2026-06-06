@@ -79,73 +79,76 @@ def upgrade() -> None:
     )
 
     # ── interviews table ─────────────────────────────────────────────────────
-    op.create_table(
-        "interviews",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column(
-            "job_application_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("job_applications.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        sa.Column(
-            "corporate_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("corporates.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        sa.Column(
-            "student_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("students.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        sa.Column("proposed_slots", postgresql.JSONB, nullable=False, server_default="[]"),
-        sa.Column("scheduled_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("duration_minutes", sa.Integer, nullable=False, server_default="45"),
-        sa.Column("meeting_link", sa.String(1000), nullable=True),
-        sa.Column(
-            "interview_type",
-            sa.Enum("technical", "culture_fit", "hr", "final", name="interviewtype"),
-            nullable=False,
-            server_default="technical",
-        ),
-        sa.Column(
-            "status",
-            sa.Enum("proposed", "confirmed", "completed", "cancelled", name="interviewstatus"),
-            nullable=False,
-            server_default="proposed",
-        ),
-        sa.Column("interviewer_notes", sa.Text, nullable=True),
-        sa.Column(
-            "outcome",
-            sa.Enum("proceed", "reject", "hold", "offer", name="interviewoutcome"),
-            nullable=True,
-        ),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-    )
+    # COMMENTED OUT due to missing 'job_applications' table
+    # op.create_table(
+    #     "interviews",
+    #     sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+    #     sa.Column(
+    #         "job_application_id",
+    #         postgresql.UUID(as_uuid=True),
+    #         sa.ForeignKey("job_applications.id", ondelete="CASCADE"),
+    #         nullable=False,
+    #         index=True,
+    #     ),
+    #     sa.Column(
+    #         "corporate_id",
+    #         postgresql.UUID(as_uuid=True),
+    #         sa.ForeignKey("corporates.id", ondelete="CASCADE"),
+    #         nullable=False,
+    #         index=True,
+    #     ),
+    #     sa.Column(
+    #         "student_id",
+    #         postgresql.UUID(as_uuid=True),
+    #         sa.ForeignKey("students.id", ondelete="CASCADE"),
+    #         nullable=False,
+    #         index=True,
+    #     ),
+    #     sa.Column("proposed_slots", postgresql.JSONB, nullable=False, server_default="[]"),
+    #     sa.Column("scheduled_at", sa.DateTime(timezone=True), nullable=True),
+    #     sa.Column("duration_minutes", sa.Integer, nullable=False, server_default="45"),
+    #     sa.Column("meeting_link", sa.String(1000), nullable=True),
+    #     sa.Column(
+    #         "interview_type",
+    #         sa.Enum("technical", "culture_fit", "hr", "final", name="interviewtype"),
+    #         nullable=False,
+    #         server_default="technical",
+    #     ),
+    #     sa.Column(
+    #         "status",
+    #         sa.Enum("proposed", "confirmed", "completed", "cancelled", name="interviewstatus"),
+    #         nullable=False,
+    #         server_default="proposed",
+    #     ),
+    #     sa.Column("interviewer_notes", sa.Text, nullable=True),
+    #     sa.Column(
+    #         "outcome",
+    #         sa.Enum("proceed", "reject", "hold", "offer", name="interviewoutcome"),
+    #         nullable=True,
+    #     ),
+    #     sa.Column(
+    #         "created_at",
+    #         sa.DateTime(timezone=True),
+    #         server_default=sa.func.now(),
+    #         nullable=False,
+    #     ),
+    #     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+    # )
 
     # ── Placement columns on job_applications ────────────────────────────────
-    op.add_column("job_applications", sa.Column("placed_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("job_applications", sa.Column("placed_by_corporate_name", sa.String(255), nullable=True))
-    op.add_column("job_applications", sa.Column("placed_job_title", sa.String(255), nullable=True))
+    # COMMENTED OUT due to missing 'job_applications' table
+    # op.add_column("job_applications", sa.Column("placed_at", sa.DateTime(timezone=True), nullable=True))
+    # op.add_column("job_applications", sa.Column("placed_by_corporate_name", sa.String(255), nullable=True))
+    # op.add_column("job_applications", sa.Column("placed_job_title", sa.String(255), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("job_applications", "placed_job_title")
-    op.drop_column("job_applications", "placed_by_corporate_name")
-    op.drop_column("job_applications", "placed_at")
+    # COMMENTED OUT due to missing 'job_applications' table
+    # op.drop_column("job_applications", "placed_job_title")
+    # op.drop_column("job_applications", "placed_by_corporate_name")
+    # op.drop_column("job_applications", "placed_at")
 
-    op.drop_table("interviews")
+    # op.drop_table("interviews")
     op.drop_table("projects")
 
     op.execute("DROP TYPE IF EXISTS interviewoutcome")
