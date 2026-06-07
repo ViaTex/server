@@ -67,6 +67,7 @@ class Settings(BaseSettings):
 
     # Embeddings
     RESUME_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    TOPIC_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
 
     # Resume builder / SSO (optional; falls back to SECRET_KEY if unset)
     RESUME_BUILDER_JWT_SECRET: str = ""

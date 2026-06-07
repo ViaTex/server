@@ -22,6 +22,7 @@ from app.models.exam_session import ExamSession
 from app.models.user import Student
 from app.services.cloudinary_service import CloudinaryService
 from app.services.exam_response_service import create_exam_response, update_response_answer
+from app.services.topic_service import process_and_map_dynamic_topics
 
 from app.services.exam_session_service import (
     create_exam_session,
@@ -312,6 +313,10 @@ async def generate_section_b_question(
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     answer_map = answer_key.get("mcq_answers") if isinstance(answer_key.get("mcq_answers"), dict) else {}
+    # Map Groq-generated topics to UUID strings via the Topic Librarian
+    raw_topics_b = question_payload.get("topics", [])
+    topic_uuids_b = process_and_map_dynamic_topics(raw_topics_b, db) if raw_topics_b else []
+
     question_schema = {
         "prompt_text": "",
         "mcqs": [
@@ -323,7 +328,7 @@ async def generate_section_b_question(
             if isinstance(item, dict)
         ],
         "long_questions": question_payload.get("long_questions", []),
-        "topics": question_payload.get("topics", []),
+        "topics": topic_uuids_b,
     }
     response = create_exam_response(
         db,
@@ -528,11 +533,15 @@ async def generate_section_c_question(
 
     student = _load_student(db, session.student_id)
     question_payload = generate_section_question(section_type="C_LOGIC", student=student)
+    # Map Groq-generated topics to UUID strings via the Topic Librarian
+    raw_topics_c = question_payload.get("topics", [])
+    topic_uuids_c = process_and_map_dynamic_topics(raw_topics_c, db) if raw_topics_c else []
+
     question_schema = {
         "prompt_text": question_payload.get("prompt_text", ""),
         "mcqs": [],
         "long_questions": [],
-        "topics": question_payload.get("topics", []),
+        "topics": topic_uuids_c,
     }
     response = create_exam_response(
         db,
@@ -702,9 +711,11 @@ async def generate_section_d_question(
         prior_context=prior_context,
     )
 
+    # Map only Groq-generated dynamic topics to UUID strings; keep fixed topics as raw strings
     dynamic_topics = question_payload.get("topics", [])
+    dynamic_uuids = process_and_map_dynamic_topics(dynamic_topics, db) if dynamic_topics else []
     fixed_topics = SECTION_CONFIG.get("Section_D", {}).get("topics", ["Problem Solving", "Debugging Speed"])
-    combined_topics = dynamic_topics + fixed_topics
+    combined_topics = dynamic_uuids + fixed_topics
 
     question_schema = {
         "prompt_text": question_payload.get("prompt_text", ""),
