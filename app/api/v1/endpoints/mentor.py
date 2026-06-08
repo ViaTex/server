@@ -118,6 +118,9 @@ async def get_mentor_profile(
         experience_years=mentor.experience_years,
         motivation=mentor.motivation,
         average_rating=float(mentor.average_rating or 0.0),
+        linkedin_profile=mentor.linkedin_profile,
+        github_profile=mentor.github_profile,
+        personal_website=mentor.personal_website,
     )
 
 
@@ -149,6 +152,9 @@ async def update_mentor_profile(
         experience_years=mentor.experience_years,
         motivation=mentor.motivation,
         average_rating=float(mentor.average_rating or 0.0),
+        linkedin_profile=mentor.linkedin_profile,
+        github_profile=mentor.github_profile,
+        personal_website=mentor.personal_website,
     )
 
 

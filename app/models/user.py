@@ -139,6 +139,10 @@ class Mentor(BaseUser):
     motivation = Column(Text, nullable=True)
     average_rating = Column(Numeric(3, 2), nullable=False, server_default="0.0")
 
+    linkedin_profile = Column(String(500), nullable=True)
+    github_profile = Column(String(500), nullable=True)
+    personal_website = Column(String(500), nullable=True)
+
     skill_evaluations = relationship(
         "SkillEvaluation",
         back_populates="mentor",
