@@ -27,6 +27,15 @@ class InterviewComplete(BaseModel):
     outcome: InterviewOutcome
 
 
+class VerifiedSkillResponse(BaseModel):
+    skill_name: str
+    total_score: Optional[int] = None
+    verdict: Optional[str] = None
+    mentor_name: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    project_title: Optional[str] = None
+
+
 class InterviewResponse(BaseModel):
     id: str
     job_application_id: str
@@ -48,6 +57,15 @@ class InterviewResponse(BaseModel):
     student_email: Optional[str] = None
     job_title: Optional[str] = None
     company_name: Optional[str] = None
+    company_logo: Optional[str] = None
+    company_website: Optional[str] = None
+    company_description: Optional[str] = None
+    company_address: Optional[str] = None
+    job_description: Optional[str] = None
+    job_requirements: Optional[str] = None
+    job_responsibilities: Optional[str] = None
+    contact_person: Optional[str] = None
+    contact_designation: Optional[str] = None
     verified_skills: list[str] = Field(default_factory=list)
 
     class Config:

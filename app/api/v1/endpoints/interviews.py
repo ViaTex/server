@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -11,8 +13,9 @@ from app.core.security import get_current_corporate, get_current_student, get_cu
 from app.models.interview import Interview, InterviewStatus
 from app.models.job import Job
 from app.models.job_application import JobApplication
-from app.models.user import SkillEvaluation, SkillEvaluationStatus, SkillEvaluationVerdict, Student, Corporate
-from app.schemas.interview import InterviewComplete, InterviewConfirm, InterviewCreate, InterviewResponse
+from app.models.project import Project
+from app.models.user import Corporate, Mentor, SkillEvaluation, SkillEvaluationStatus, SkillEvaluationVerdict, Student
+from app.schemas.interview import InterviewComplete, InterviewConfirm, InterviewCreate, InterviewResponse, VerifiedSkillResponse
 
 router = APIRouter()
 
@@ -83,6 +86,15 @@ def _serialize(
         student_email=student.email if student else None,
         job_title=job.title if job else None,
         company_name=(job.company_name or corporate.company_name) if (job and corporate) else None,
+        company_logo=job.company_logo if job else None,
+        company_website=job.company_website if job else None,
+        company_description=job.company_description if job else None,
+        company_address=job.company_address if job else None,
+        job_description=job.description if job else None,
+        job_requirements=job.requirements if job else None,
+        job_responsibilities=job.responsibilities if job else None,
+        contact_person=job.contact_person if job else None,
+        contact_designation=job.contact_designation if job else None,
         verified_skills=_get_verified_skills(db, interview.student_id),
     )
 
@@ -225,18 +237,118 @@ async def cancel_interview(
 
 @router.get("/me", response_model=list[InterviewResponse])
 async def list_my_interviews(
+    status: Optional[str] = Query(None, description="Filter by interview status, comma-separated"),
+    search: Optional[str] = Query(None, description="Search by company or role"),
     current_user: dict = Depends(get_current_student),
     db: Session = Depends(get_db),
 ):
     """Student lists all their upcoming and past interviews."""
     student_id = UUID(str(current_user["user_id"]))
-    interviews = (
-        db.query(Interview)
-        .filter(Interview.student_id == student_id)
-        .order_by(Interview.created_at.desc())
+    query = db.query(Interview).filter(Interview.student_id == student_id)
+
+    if status:
+        status_values = [s.strip() for s in status.split(',') if s.strip()]
+        query = query.filter(Interview.status.in_(status_values))
+
+    if search:
+        search_term = f"%{search.lower()}%"
+        query = query.join(JobApplication, JobApplication.id == Interview.job_application_id)
+        query = query.join(Job, Job.id == JobApplication.job_id)
+        query = query.filter(
+            or_(
+                func.lower(Job.title).like(search_term),
+                func.lower(Job.company_name).like(search_term),
+                func.lower(Job.description).like(search_term),
+            )
+        )
+
+    interviews = query.order_by(Interview.created_at.desc()).all()
+    return [_serialize(i, db) for i in interviews]
+
+
+def _get_verified_skill_reports(db: Session, student_id: UUID) -> list[dict]:
+    evaluations = (
+        db.query(SkillEvaluation)
+        .filter(
+            SkillEvaluation.student_id == student_id,
+            SkillEvaluation.status == SkillEvaluationStatus.EVALUATED,
+            SkillEvaluation.verdict.in_(
+                [SkillEvaluationVerdict.EXCELLENT, SkillEvaluationVerdict.VERY_GOOD, SkillEvaluationVerdict.GOOD]
+            ),
+        )
+        .order_by(SkillEvaluation.updated_at.desc())
         .all()
     )
-    return [_serialize(i, db) for i in interviews]
+
+    reports = []
+    seen_skills = set()
+    for evaluation in evaluations:
+        if not evaluation.project_id:
+            continue
+        project = db.query(Project).filter(Project.id == evaluation.project_id).first()
+        mentor = db.query(Mentor).filter(Mentor.id == evaluation.mentor_id).first()
+        skill_name = project.skill_domain if project and project.skill_domain else None
+        if not skill_name or skill_name in seen_skills:
+            continue
+        seen_skills.add(skill_name)
+        reports.append({
+            "skill_name": skill_name,
+            "total_score": evaluation.total_score,
+            "verdict": evaluation.verdict.value if evaluation.verdict else None,
+            "mentor_name": mentor.name if mentor else None,
+            "verified_at": evaluation.updated_at or evaluation.created_at,
+            "project_title": project.title if project else None,
+        })
+        if len(reports) >= 5:
+            break
+    return reports
+
+
+def _get_preparation_tips(interview_type: Optional[str], job_title: Optional[str], company_name: Optional[str]) -> list[str]:
+    tips = []
+    if job_title:
+        if 'developer' in job_title.lower() or 'engineer' in job_title.lower():
+            tips.append('Review system design fundamentals and common coding principles before the interview.')
+        if 'frontend' in job_title.lower() or 'react' in job_title.lower():
+            tips.append('Focus on component architecture, browser rendering, and modern frontend patterns.')
+        if 'backend' in job_title.lower() or 'api' in job_title.lower():
+            tips.append('Brush up on API design, database modeling, and performance tuning.')
+        if 'data' in job_title.lower() or 'machine learning' in job_title.lower():
+            tips.append('Prepare to explain core algorithms and how you evaluate model performance.')
+    if interview_type:
+        if interview_type == 'technical':
+            tips.append('Prepare to explain your project architecture, technical decisions, and trade-offs clearly.')
+        if interview_type == 'culture_fit':
+            tips.append('Be ready to discuss your strengths, collaboration style, and how you handle ambiguity.')
+        if interview_type == 'hr':
+            tips.append('Review your career goals, strengths, and experiences with teamwork and leadership.')
+        if interview_type == 'final':
+            tips.append('Summarize your impact, long-term goals, and fit for the company with confidence.')
+    if company_name:
+        tips.append(f'Look up {company_name} culture and products to tailor your examples to their mission.')
+    if not tips:
+        tips.append('Review the role, interview format, and your verified skills before the meeting.')
+    return tips
+
+
+@router.get('/me/verified-skills', response_model=list[VerifiedSkillResponse])
+async def list_verified_skills(
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    student_id = UUID(str(current_user['user_id']))
+    return _get_verified_skill_reports(db, student_id)
+
+
+@router.get('/me/preparation-tips')
+async def get_preparation_tips(
+    interview_type: Optional[str] = Query(None),
+    job_title: Optional[str] = Query(None),
+    company_name: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    return _get_preparation_tips(interview_type, job_title, company_name)
 
 
 # ── Corporate: list all interviews ───────────────────────────────────────────
