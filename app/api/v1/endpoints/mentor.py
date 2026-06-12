@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_mentor, get_current_student
 from app.models.user import Mentor, SkillEvaluation, Student
+from app.models.project import Project, ProjectStatus
 from app.schemas.mentor import (
     MentorProfileResponse,
     MentorProfileUpdate,
@@ -48,7 +49,7 @@ def _serialize_evaluation(evaluation: SkillEvaluation) -> SkillEvaluationRespons
             "live_url": evaluation.project.live_url,
             "skill_domain": evaluation.project.skill_domain,
         }
-        
+
     student_data = None
     if evaluation.student:
         student_data = {
@@ -97,6 +98,8 @@ def _refresh_mentor_rating(db: Session, mentor_id: UUID) -> None:
         mentor.average_rating = float(avg_rating or 0.0)
 
 
+# ── Mentor: get profile ───────────────────────────────────────────────────────
+
 @router.get("/profile", response_model=MentorProfileResponse)
 async def get_mentor_profile(
     current_user: dict = Depends(get_current_mentor),
@@ -111,14 +114,20 @@ async def get_mentor_profile(
         user_id=str(mentor.user_id),
         email=mentor.email,
         name=mentor.name,
+        profile_picture_url=mentor.profile_picture_url,
         phone=mentor.phone,
         current_role=mentor.current_role,
         expertise_areas=mentor.expertise_areas or [],
         experience_years=mentor.experience_years,
         motivation=mentor.motivation,
         average_rating=float(mentor.average_rating or 0.0),
+        linkedin_profile=mentor.linkedin_profile,
+        github_profile=mentor.github_profile,
+        personal_website=mentor.personal_website,
     )
 
+
+# ── Mentor: update profile ────────────────────────────────────────────────────
 
 @router.patch("/profile", response_model=MentorProfileResponse)
 async def update_mentor_profile(
@@ -141,14 +150,20 @@ async def update_mentor_profile(
         user_id=str(mentor.user_id),
         email=mentor.email,
         name=mentor.name,
+        profile_picture_url=mentor.profile_picture_url,
         phone=mentor.phone,
         current_role=mentor.current_role,
         expertise_areas=mentor.expertise_areas or [],
         experience_years=mentor.experience_years,
         motivation=mentor.motivation,
         average_rating=float(mentor.average_rating or 0.0),
+        linkedin_profile=mentor.linkedin_profile,
+        github_profile=mentor.github_profile,
+        personal_website=mentor.personal_website,
     )
 
+
+# ── Mentor: create evaluation ─────────────────────────────────────────────────
 
 @router.post("/evaluations", response_model=SkillEvaluationResponse)
 async def create_skill_evaluation(
@@ -192,6 +207,8 @@ async def create_skill_evaluation(
     return _serialize_evaluation(evaluation)
 
 
+# ── Mentor: list evaluations ──────────────────────────────────────────────────
+
 @router.get("/evaluations", response_model=list[SkillEvaluationResponse])
 async def list_skill_evaluations(
     only_assigned_to_me: bool = Query(True),
@@ -205,6 +222,8 @@ async def list_skill_evaluations(
     evaluations = query.order_by(SkillEvaluation.created_at.desc()).all()
     return [_serialize_evaluation(item) for item in evaluations]
 
+
+# ── Mentor: schedule viva slots ───────────────────────────────────────────────
 
 @router.patch("/evaluations/{evaluation_id}/schedule", response_model=SkillEvaluationResponse)
 async def update_skill_evaluation_schedule(
@@ -241,6 +260,8 @@ async def update_skill_evaluation_schedule(
     return _serialize_evaluation(evaluation)
 
 
+# ── Mentor: score viva ────────────────────────────────────────────────────────
+
 @router.patch("/evaluations/{evaluation_id}/score", response_model=SkillEvaluationResponse)
 async def score_skill_evaluation(
     evaluation_id: str,
@@ -267,10 +288,58 @@ async def score_skill_evaluation(
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(evaluation, key, value)
 
+    # ── Gap #2 Fix: Auto-promote linked project to VERIFIED on passing verdict ──
+    passing_verdicts = {"excellent", "very_good", "good"}
+    if evaluation.project_id and evaluation.verdict:
+        verdict_value = evaluation.verdict.value if hasattr(evaluation.verdict, "value") else str(evaluation.verdict)
+        if verdict_value in passing_verdicts:
+            project = db.query(Project).filter(Project.id == evaluation.project_id).first()
+            if project and project.status != ProjectStatus.VERIFIED:
+                project.status = ProjectStatus.VERIFIED
+                if not project.verified_badge:
+                    domain = project.skill_domain or "Skill"
+                    project.verified_badge = f"Verified {domain} Developer ✓"
+
     db.commit()
     db.refresh(evaluation)
     return _serialize_evaluation(evaluation)
 
+
+# ── Student: confirm viva slot (Gap #3 Fix) ───────────────────────────────────
+
+@router.patch("/evaluations/{evaluation_id}/confirm-slot", response_model=SkillEvaluationResponse)
+async def student_confirm_viva_slot(
+    evaluation_id: str,
+    payload: SkillEvaluationScheduleUpdate,
+    current_user: dict = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    """Student picks and confirms one of the proposed viva slots."""
+    try:
+        evaluation_uuid = UUID(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid evaluation_id") from exc
+
+    evaluation = (
+        db.query(SkillEvaluation)
+        .filter(
+            SkillEvaluation.id == evaluation_uuid,
+            SkillEvaluation.student_id == UUID(str(current_user["user_id"])),
+        )
+        .first()
+    )
+    if not evaluation:
+        raise HTTPException(status_code=404, detail="Skill evaluation not found")
+
+    if payload.confirmed_slot:
+        evaluation.confirmed_slot = payload.confirmed_slot
+
+    db.commit()
+    db.refresh(evaluation)
+    return _serialize_evaluation(evaluation)
+
+
+# ── Student: rate mentor after viva ──────────────────────────────────────────
 
 @router.patch("/evaluations/{evaluation_id}/student-review", response_model=SkillEvaluationResponse)
 async def submit_student_review(

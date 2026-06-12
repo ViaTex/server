@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_mentor, get_current_student, get_current_user
+from app.core.security import get_current_student, get_current_user
 from app.models.project import Project, ProjectStatus
-from app.models.user import Mentor, SkillEvaluation, SkillEvaluationStatus, Student
+from app.models.user import Mentor, SkillEvaluation, SkillEvaluationStatus, Student, UserStatus
 from app.schemas.project import ProjectCreate, ProjectResponse, ProjectStatusUpdate
 from pydantic import BaseModel
 
@@ -60,8 +60,9 @@ async def create_project(
     db.commit()
     db.refresh(project)
 
-    # Auto-assignment temporarily disabled; Admin will manually assign.
-    # _try_auto_assign_mentor(db, project, student_id)
+    # Auto-assign mentor: match by skill_domain, load-balanced by fewest active evaluations.
+    # Soft-fail: if no mentor found, project stays pending_viva for admin to assign manually.
+    _try_auto_assign_mentor(db, project, student_id)
 
     return _serialize(project)
 
@@ -221,7 +222,7 @@ def _try_auto_assign_mentor(db: Session, project: Project, student_id: UUID) -> 
     domain_lower = project.skill_domain.lower()
 
     # Find mentors whose expertise_areas overlap with the project's skill_domain
-    mentors: list[Mentor] = db.query(Mentor).filter(Mentor.status == "active").all()  # type: ignore[attr-defined]
+    mentors: list[Mentor] = db.query(Mentor).filter(Mentor.status == UserStatus.ACTIVE).all()  # type: ignore[attr-defined]
     candidate_mentors = [
         m for m in mentors
         if any(domain_lower in area.lower() for area in (m.expertise_areas or []))

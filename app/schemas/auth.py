@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from typing import Optional, List
 from datetime import date
 from app.models.user import Gender
@@ -82,3 +82,97 @@ class LoginRequest(BaseModel):
 class OTPVerifyRequest(BaseModel):
     email: EmailStr
     code: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str = Field(..., min_length=8)
+
+    @model_validator(mode="after")
+    def validate_code_length(self):
+        code = self.code.strip()
+        if not code.isdigit() or len(code) != 6:
+            raise ValueError("OTP must be exactly 6 digits")
+        self.code = code
+        return self
+
+
+class ForgotPasswordStartRequest(BaseModel):
+    identifier: Optional[str] = Field(None, min_length=3, max_length=255, description="Email or phone")
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    captcha_token: Optional[str] = None
+    channel: str = Field(default="email", description="email or sms")
+
+    @model_validator(mode="after")
+    def normalize_identifier(self):
+        if not self.identifier:
+            self.identifier = str(self.email or self.phone or "").strip()
+        if not self.identifier:
+            raise ValueError("identifier or email or phone is required")
+        return self
+
+
+class ForgotPasswordOtpVerifyRequest(BaseModel):
+    identifier: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    otp: Optional[str] = None
+    code: Optional[str] = None
+    captcha_token: Optional[str] = None
+
+    @model_validator(mode="after")
+    def normalize_fields(self):
+        if not self.identifier:
+            self.identifier = str(self.email or self.phone or "").strip()
+        if not self.otp:
+            self.otp = self.code
+        if not self.identifier:
+            raise ValueError("identifier or email or phone is required")
+        if not self.otp:
+            raise ValueError("otp or code is required")
+        otp = self.otp.strip()
+        if not otp.isdigit() or len(otp) != 6:
+            raise ValueError("OTP must be exactly 6 digits")
+        self.otp = otp
+        return self
+
+
+class ForgotPasswordCompleteRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(..., min_length=8)
+
+
+class ResendOtpRequest(BaseModel):
+    identifier: str
+    channel: str = Field(default="email")
+
+
+class EmailVerificationLinkRequest(BaseModel):
+    token: str
+
+
+class EmailVerificationOtpRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+    @model_validator(mode="after")
+    def validate_otp_length(self):
+        otp = self.otp.strip()
+        if not otp.isdigit() or len(otp) != 6:
+            raise ValueError("OTP must be exactly 6 digits")
+        self.otp = otp
+        return self
+
+
+class ResendEmailVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class MailTestRequest(BaseModel):
+    email: EmailStr

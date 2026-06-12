@@ -8,6 +8,10 @@ from app.models.user import (
 	UserSession,
 	EmailOTP,
 	PasswordResetOTP,
+	PasswordResetToken,
+	EmailVerificationToken,
+	PasswordHistory,
+	AuthAuditLog,
 	SkillEvaluation,
 )
 from app.models.exam_session import ExamSession

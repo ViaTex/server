@@ -14,6 +14,9 @@ class MentorProfileUpdate(BaseModel):
     current_role: Optional[str] = Field(None, max_length=255)
     expertise_areas: Optional[list[str]] = None
     experience_years: Optional[int] = Field(None, ge=0, le=80)
+    linkedin_profile: Optional[str] = Field(None, max_length=500)
+    github_profile: Optional[str] = Field(None, max_length=500)
+    personal_website: Optional[str] = Field(None, max_length=500)
     motivation: Optional[str] = None
 
 
@@ -22,12 +25,16 @@ class MentorProfileResponse(BaseModel):
     user_id: str
     email: EmailStr
     name: str
+    profile_picture_url: Optional[str] = None
     phone: Optional[str] = None
     current_role: Optional[str] = None
     expertise_areas: list[str] = Field(default_factory=list)
     experience_years: Optional[int] = None
     motivation: Optional[str] = None
     average_rating: float = 0.0
+    linkedin_profile: Optional[str] = None
+    github_profile: Optional[str] = None
+    personal_website: Optional[str] = None
 
     class Config:
         from_attributes = True

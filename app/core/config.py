@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     MAIL_ENCRYPTION: str = "tls"
     MAIL_FROM_ADDRESS: str = "noreply@dishasetu.in"
     MAIL_FROM_NAME: str = "DishaSetu"
+    MAIL_DEBUG: bool = True   # Show SMTP transcript in logs (set false in production)
+    MAIL_RETRY_COUNT: int = 3
+    MAIL_RETRY_DELAY_SECONDS: int = 2
+    MAIL_DEV_FALLBACK: bool = False  # If true: return OTP in response when email fails (DEV ONLY)
 
     # Frontend URL for links in emails
     FRONTEND_URL: str = "https://dishasetu.in"
@@ -129,6 +133,13 @@ class Settings(BaseSettings):
         port = values.get("POSTGRES_PORT", "5432")
         db = values.get("POSTGRES_DB", "dishasetu")
         return f"postgresql://{user}:{password}@{server}:{port}/{db}"
+
+    @field_validator("MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_FROM_ADDRESS", "MAIL_FROM_NAME", mode="before")
+    @classmethod
+    def sanitize_mail_fields(cls, v: Optional[str]) -> str:
+        if v is None:
+            return ""
+        return str(v).strip().strip('"').strip("'")
 
     model_config = SettingsConfigDict(
         env_file=_env_path(),
