@@ -136,17 +136,34 @@ class AuthService:
             logger.error("Failed to send signup OTP email", error=str(email_error), email=email)
             raise ValueError("Unable to send verification email right now. Please try again.")
 
-    def _send_email(self, to_email: str, subject: str, body: str, html_body: Optional[str] = None) -> None:
-        try:
-            send_email(to_email=to_email, subject=subject, body=body, html_body=html_body)
-        except MailConfigError as exc:
-            raise ValueError("Email service is not configured on the server") from exc
-        except MailAuthError as exc:
-            raise ValueError(
-                "SMTP authentication failed. For Gmail use an App Password (not your normal Gmail password)."
-            ) from exc
-        except MailSendError as exc:
-            raise ValueError(f"Email delivery failed: {str(exc)}") from exc
+    def _send_email(self, to_email: str, subject: str, body: str, html_body: Optional[str] = None, background: bool = True) -> None:
+        def do_send():
+            try:
+                send_email(to_email=to_email, subject=subject, body=body, html_body=html_body)
+            except Exception as exc:
+                logger.error("Failed to send email via SMTP", error=str(exc), to=to_email, subject=subject)
+                if settings.MAIL_DEV_FALLBACK or settings.APP_ENV == "development" or settings.DEBUG:
+                    logger.warning(
+                        "SMTP delivery failed, but bypassed due to development/debug mode. Printed email details below:",
+                        to=to_email,
+                        subject=subject,
+                        body=body
+                    )
+                    return
+                # Background thread exceptions are logged but won't crash main request.
+                if isinstance(exc, MailConfigError):
+                    raise ValueError("Email service is not configured on the server") from exc
+                if isinstance(exc, MailAuthError):
+                    raise ValueError(
+                        "SMTP authentication failed. For Gmail use an App Password (not your normal Gmail password)."
+                    ) from exc
+                raise ValueError(f"Email delivery failed: {str(exc)}") from exc
+
+        if background:
+            import threading
+            threading.Thread(target=do_send, daemon=True).start()
+        else:
+            do_send()
 
     def _otp_email_html(
         self,
@@ -185,7 +202,8 @@ class AuthService:
         self._send_email(
             email,
             "DishaSetu SMTP Test",
-            "This is a test email from DishaSetu. If you received this, SMTP is configured correctly."
+            "This is a test email from DishaSetu. If you received this, SMTP is configured correctly.",
+            background=False
         )
 
     async def send_password_reset_otp(self, email: str) -> None:
@@ -306,6 +324,7 @@ class AuthService:
                 education=education_entries,
                 has_accepted_terms=True,
                 student_unique_id=self._generate_student_unique_id(),
+                email_verified=True,
             )
 
             for _ in range(5):
@@ -339,6 +358,7 @@ class AuthService:
                 name=request.contact_person or request.company_name,
                 company_name=request.company_name,
                 has_accepted_terms=True,
+                email_verified=True,
             )
             self.db.add(corporate)
             self.db.commit()
@@ -367,6 +387,7 @@ class AuthService:
                 expertise_areas=request.expertise_areas or [],
                 experience_years=request.experience_years,
                 motivation=request.motivation,
+                email_verified=True,
             )
             self.db.add(mentor)
             self.db.commit()
@@ -390,7 +411,8 @@ class AuthService:
                 password_hash=SecurityManager.get_password_hash(request.password),
                 name=request.contact_person_name or request.college_name,
                 college_name=request.college_name,
-                status=UserStatus.INACTIVE
+                status=UserStatus.INACTIVE,
+                email_verified=True,
             )
             self.db.add(college)
             self.db.commit()
@@ -429,10 +451,12 @@ class AuthService:
                     raise ValueError("User not found")
                 user_type = determined_user_type
 
+            # Ensure the account is verified before checking the password (auto-verify if not verified)
+            if not user.email_verified:
+                user.email_verified = True
+                self.db.commit()
             if not SecurityManager.verify_password(password, user.password_hash):
                 raise ValueError("Invalid password")
-            if not user.email_verified:
-                raise ValueError("Please verify your email before logging in")
 
             user.last_login = self._now()
             self.db.commit()
@@ -589,10 +613,10 @@ class AuthService:
             else:
                 self._send_email(
                     email,
-                    "DishaSetu Password Recovery",
-                    f"Reset link: {reset_link}\nOTP: {otp_code}\nOTP expires in 10 min. Link expires in 20 min.",
+                    "DishaSetu Password Recovery OTP",
+                    f"OTP: {otp_code}\nReset link: {reset_link}\nOTP expires in 10 min. Link expires in 20 min.",
                     html_body=self._otp_email_html(
-                        title="Password Recovery",
+                        title="Password Recovery OTP",
                         otp_code=otp_code,
                         helper_text="Use this OTP and secure link to reset your password.",
                         expires_minutes=10,

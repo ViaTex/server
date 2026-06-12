@@ -90,8 +90,16 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
-    code: str = Field(..., min_length=6, max_length=6)
+    code: str
     new_password: str = Field(..., min_length=8)
+
+    @model_validator(mode="after")
+    def validate_code_length(self):
+        code = self.code.strip()
+        if not code.isdigit() or len(code) != 6:
+            raise ValueError("OTP must be exactly 6 digits")
+        self.code = code
+        return self
 
 
 class ForgotPasswordStartRequest(BaseModel):
@@ -114,8 +122,8 @@ class ForgotPasswordOtpVerifyRequest(BaseModel):
     identifier: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
-    otp: Optional[str] = Field(None, min_length=6, max_length=6)
-    code: Optional[str] = Field(None, min_length=6, max_length=6)
+    otp: Optional[str] = None
+    code: Optional[str] = None
     captcha_token: Optional[str] = None
 
     @model_validator(mode="after")
@@ -128,6 +136,10 @@ class ForgotPasswordOtpVerifyRequest(BaseModel):
             raise ValueError("identifier or email or phone is required")
         if not self.otp:
             raise ValueError("otp or code is required")
+        otp = self.otp.strip()
+        if not otp.isdigit() or len(otp) != 6:
+            raise ValueError("OTP must be exactly 6 digits")
+        self.otp = otp
         return self
 
 
@@ -147,7 +159,15 @@ class EmailVerificationLinkRequest(BaseModel):
 
 class EmailVerificationOtpRequest(BaseModel):
     email: EmailStr
-    otp: str = Field(..., min_length=6, max_length=6)
+    otp: str
+
+    @model_validator(mode="after")
+    def validate_otp_length(self):
+        otp = self.otp.strip()
+        if not otp.isdigit() or len(otp) != 6:
+            raise ValueError("OTP must be exactly 6 digits")
+        self.otp = otp
+        return self
 
 
 class ResendEmailVerificationRequest(BaseModel):

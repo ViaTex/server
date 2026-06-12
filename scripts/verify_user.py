@@ -31,13 +31,13 @@ def verify_user(email: str, db) -> bool:
         user = db.query(Model).filter(Model.email == email).first()
         if user:
             if user.email_verified:
-                print(f"[{user_type}] {email} — already verified ✓")
+                print(f"[{user_type}] {email} - already verified")
             else:
                 user.email_verified = True
                 db.commit()
-                print(f"[{user_type}] {email} — email_verified set to True ✅")
+                print(f"[{user_type}] {email} - email_verified set to True")
             return True
-    print(f"✗ No user found with email: {email}")
+    print(f"No user found with email: {email}")
     return False
 
 
@@ -47,7 +47,7 @@ def verify_all(db):
         users = db.query(Model).filter(Model.email_verified == False).all()
         for user in users:
             user.email_verified = True
-            print(f"[{user_type}] {user.email} — verified ✅")
+            print(f"[{user_type}] {user.email} - verified")
             total += 1
     db.commit()
     print(f"\nDone. {total} user(s) verified.")
