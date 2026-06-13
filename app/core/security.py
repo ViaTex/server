@@ -1,17 +1,18 @@
-import hashlib
+
 import secrets
 from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Optional, Union, Any
 from jose import JWTError, jwt
+# pyrefly: ignore [missing-import]
 from passlib.context import CryptContext
-from fastapi import HTTPException, status, Depends
+# pyrefly: ignore [missing-import]
+from fastapi import HTTPException, status, Depends, Request
+# pyrefly: ignore [missing-import]
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 import logging
 
 from app.core.config import settings
-from app.core.database import get_db
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -181,17 +182,24 @@ class SecurityManager:
 
 # Dependency to get current user from token
 async def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> dict:
     """Get current user from JWT token"""
+    print(f"DEBUG AUTH HEADERS: {request.headers.get('Authorization')}")
     if not credentials:
+        print("DEBUG AUTH: No credentials provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = credentials.credentials
-    payload = SecurityManager.verify_token(token)
+    try:
+        payload = SecurityManager.verify_token(token)
+    except Exception as e:
+        print(f"DEBUG AUTH: verify_token failed: {e}")
+        raise
     
     user_id: str = payload.get("sub")
     user_type: str = payload.get("user_type", "student")
@@ -276,40 +284,7 @@ async def get_current_admin(
     return current_user
 
 
-# Optional authentication dependency (non-failing when header missing)
-async def check_student_access(
-    current_student: dict = Depends(get_current_student),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Dependency to check if student has access based on license"""
-    from uuid import UUID
-    from app.services.student_access_service import StudentAccessService
-    from app.models.user import Student, College
-    
-    access_service = StudentAccessService(db)
-    access_check = access_service.check_student_access(UUID(current_student["user_id"]))
-    
-    if not access_check["has_access"]:
-        # Get college info for error response
-        student = db.query(Student).filter(Student.id == UUID(current_student["user_id"])).first()
-        college_name = None
-        college_email = None
-        if student and student.college_id:
-            college = db.query(College).filter(College.id == student.college_id).first()
-            if college:
-                college_name = college.college_name
-                college_email = college.email
-        
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "detail": access_check["reason"],
-                "college_name": college_name,
-                "college_email": college_email
-            }
-        )
-    
-    return current_student
+
 
 
 async def get_optional_user(
