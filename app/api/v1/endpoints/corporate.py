@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
-from sqlalchemy import inspect as sqlalchemy_inspect
+
+# pyrefly: ignore [missing-import]
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, Request
+# pyrefly: ignore [missing-import]
 from sqlalchemy.exc import ProgrammingError
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session, load_only
 
 from app.core.database import get_db
@@ -30,11 +33,7 @@ def _is_missing_job_applications_table(error: Exception) -> bool:
 
 
 def _has_offer_letter_columns(db: Session) -> bool:
-    inspector = sqlalchemy_inspect(db.bind)
-    if not inspector.has_table("job_applications"):
-        return False
-    columns = {column["name"] for column in inspector.get_columns("job_applications")}
-    return {"offer_letter", "offer_letter_sent_at"}.issubset(columns)
+    return True
 
 
 def _application_load_options(include_offer_letter: bool):
@@ -158,9 +157,11 @@ async def update_corporate_profile(
 
 @router.get("/applicants", response_model=list[JobApplicationResponse])
 async def list_corporate_applicants(
+    request: Request,
     current_user: dict = Depends(get_current_corporate),
     db: Session = Depends(get_db),
 ):
+    print("DEBUG HEADERS:", request.headers)
     corporate_id = UUID(str(current_user["user_id"]))
     corporate = db.query(Corporate).filter(Corporate.id == corporate_id).first()
     if not corporate:
@@ -243,6 +244,9 @@ async def update_corporate_applicant(
             application.placed_at = datetime.now(timezone.utc)
             application.placed_by_corporate_name = corporate.company_name
             application.placed_job_title = job.title
+
+    if "cover_letter" in update_data:
+        application.cover_letter = payload.cover_letter
 
     if "offer_letter" in update_data:
         if not has_offer_letter_columns:

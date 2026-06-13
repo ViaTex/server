@@ -16,6 +16,7 @@ class JobApplicationCreateRequest(BaseModel):
 class JobApplicationUpdateRequest(BaseModel):
     status: Optional[str] = Field(None, min_length=1, max_length=50)
     offer_letter: Optional[str] = None
+    cover_letter: Optional[str] = None
 
 
 class JobApplicationResponse(BaseModel):
